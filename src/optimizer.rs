@@ -144,10 +144,7 @@ async fn probe_candidate(
     let mut stream = timeout(timeout_duration, connector.connect(server_name, stream))
         .await
         .context("TLS handshake timed out")??;
-    let request = format!(
-        "HEAD {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: edgesteer/0.1\r\nConnection: close\r\n\r\n",
-        settings.test_path, settings.test_host
-    );
+    let request = probe_request(&settings);
     timeout(timeout_duration, stream.write_all(request.as_bytes()))
         .await
         .context("HTTP probe write timed out")??;
@@ -172,6 +169,13 @@ async fn probe_candidate(
         address,
         latency: started_at.elapsed(),
     })
+}
+
+fn probe_request(settings: &OptimizerConfig) -> String {
+    format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: edgesteer/0.1\r\nConnection: close\r\n\r\n",
+        settings.test_path, settings.test_host
+    )
 }
 
 fn validate_cloudflare_probe_response(header: &[u8]) -> Result<()> {
@@ -346,5 +350,11 @@ mod tests {
             validate_cloudflare_probe_response(b"HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn trace_probe_uses_get() {
+        let settings = OptimizerConfig::default();
+        assert!(probe_request(&settings).starts_with("GET /cdn-cgi/trace HTTP/1.1\r\n"));
     }
 }

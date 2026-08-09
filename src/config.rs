@@ -217,7 +217,7 @@ impl Default for OptimizerConfig {
         Self {
             enabled: false,
             interval_secs: 6 * 60 * 60,
-            test_host: "speed.cloudflare.com".to_owned(),
+            test_host: "www.cloudflare.com".to_owned(),
             test_path: "/cdn-cgi/trace".to_owned(),
             test_port: 443,
             timeout_ms: 3_000,
