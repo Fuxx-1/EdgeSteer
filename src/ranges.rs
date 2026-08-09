@@ -69,7 +69,7 @@ pub async fn refresh_loop(state: SharedState) {
             }
         }
 
-        let seconds = state.config.load().cloudflare.range_refresh_secs;
+        let seconds = state.runtime.load().config.cloudflare.range_refresh_secs;
         tokio::select! {
             _ = sleep(Duration::from_secs(seconds)) => {}
             _ = state.config_changed.notified() => {}

@@ -22,9 +22,9 @@ rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 rustls = "0.23"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 tokio = { version = "1.43", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-rustls = "0.26"
-toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webpki-roots = "0.26"

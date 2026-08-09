@@ -1,46 +1,33 @@
 use std::{
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::SocketAddr,
     sync::{Arc, OnceLock},
     time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use hickory_proto::{
-    op::{Message, ResponseCode},
-    rr::{
-        RData, Record, RecordType,
-        rdata::{
-            A, AAAA, HTTPS, SVCB,
-            svcb::{IpHint, SvcParamValue},
-        },
-    },
+    op::{Message, MessageType, ResponseCode},
     serialize::binary::{BinDecodable, BinEncodable},
 };
-use ipnet::IpNet;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use rustls::{ClientConfig, RootCertStore, pki_types::ServerName};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
-    time::timeout,
+    time::{Instant, timeout},
 };
 use tokio_rustls::TlsConnector;
 use tracing::{debug, info, warn};
 
 use crate::{
-    config::{FileConfig, UpstreamConfig, UpstreamProtocol},
-    state::{PreferredIps, SharedState},
+    config::{LayerConfig, LayerType},
+    plugins,
+    state::{RuntimeConfig, SharedState},
 };
 
-#[derive(Clone, Copy)]
-enum AddressFamily {
-    Ipv4,
-    Ipv6,
-}
-
 pub async fn serve(state: SharedState) -> Result<()> {
-    let address = state.config.load().listener.address;
+    let address = state.runtime.load().config.listener.address;
     let udp_socket = Arc::new(
         UdpSocket::bind(address)
             .await
@@ -65,7 +52,15 @@ async fn serve_udp(socket: Arc<UdpSocket>, state: SharedState) -> Result<()> {
         let packet = buffer[..size].to_vec();
         let socket = socket.clone();
         let state = state.clone();
+        let permit = match state.query_permits.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                debug!(%peer, "dropping UDP DNS query because the in-flight limit is reached");
+                continue;
+            }
+        };
         tokio::spawn(async move {
+            let _permit = permit;
             if let Some(response) = process_packet(&packet, &state).await {
                 if let Err(error) = socket.send_to(&response, peer).await {
                     debug!(%peer, %error, "could not send UDP DNS response");
@@ -100,9 +95,16 @@ async fn handle_tcp_connection(mut stream: TcpStream, state: &SharedState) -> Re
 
         let mut packet = vec![0_u8; packet_length];
         stream.read_exact(&mut packet).await?;
+        let permit = state
+            .query_permits
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("query semaphore is never closed");
         let Some(response) = process_packet(&packet, state).await else {
             return Ok(());
         };
+        drop(permit);
         let response_length =
             u16::try_from(response.len()).context("DNS response exceeds TCP frame limit")?;
         stream.write_u16(response_length).await?;
@@ -113,44 +115,31 @@ async fn handle_tcp_connection(mut stream: TcpStream, state: &SharedState) -> Re
 
 async fn process_packet(packet: &[u8], state: &SharedState) -> Option<Vec<u8>> {
     let request = match Message::from_bytes(packet) {
-        Ok(request) => request,
+        Ok(request) if request.message_type() == MessageType::Query => request,
+        Ok(_) => {
+            debug!("discarding a DNS response received on the listener");
+            return None;
+        }
         Err(error) => {
             debug!(%error, "discarding malformed DNS request");
             return None;
         }
     };
-    let config = state.config.load_full();
-    let raw_response = match query_upstreams(packet, &config, state).await {
-        Ok(response) => response,
-        Err(error) => {
-            warn!(%error, "all DNS upstreams failed");
-            return server_failure(&request);
-        }
-    };
-    let mut response = match Message::from_bytes(&raw_response) {
-        Ok(response) => response,
-        Err(error) => {
-            warn!(%error, "upstream returned an invalid DNS response; forwarding it unchanged");
-            return Some(raw_response);
-        }
-    };
-
+    let runtime = state.runtime.load_full();
     let ranges = state.cloudflare_ranges.load_full();
-    let preferred = state.preferred_ips.load_full();
-    let changed = rewrite_response(
-        &mut response,
-        ranges.as_slice(),
-        preferred.as_ref(),
-        config.cloudflare.rewrite_ttl_secs,
-    );
-    if changed {
-        debug!(preferred = ?preferred, "rewrote Cloudflare DNS response");
-    }
+    let response =
+        match query_layers(packet, &request, runtime.as_ref(), ranges.as_slice(), state).await {
+            Ok(response) => response,
+            Err(error) => {
+                warn!(%error, "all DNS layers failed");
+                return server_failure(&request);
+            }
+        };
     match response.to_bytes() {
         Ok(bytes) => Some(bytes),
         Err(error) => {
-            warn!(%error, "could not encode rewritten DNS response; forwarding upstream response unchanged");
-            Some(raw_response)
+            warn!(%error, "could not encode DNS response");
+            server_failure(&request)
         }
     }
 }
@@ -162,65 +151,146 @@ fn server_failure(request: &Message) -> Option<Vec<u8>> {
     response.to_bytes().ok()
 }
 
-async fn query_upstreams(
+async fn query_layers(
     packet: &[u8],
-    config: &FileConfig,
+    request: &Message,
+    runtime: &RuntimeConfig,
+    ranges: &[ipnet::IpNet],
     state: &SharedState,
-) -> Result<Vec<u8>> {
+) -> Result<Message> {
+    let domain = (request.queries().len() == 1).then(|| request.queries()[0].name().to_utf8());
+    let mut current = Some(runtime.config.select_layer(domain.as_deref()).to_owned());
+    let deadline = Instant::now() + Duration::from_millis(runtime.config.request_timeout_ms);
+    let mut interceptors = Vec::new();
     let mut last_error = None;
-    for upstream in &config.upstreams {
-        let result = match upstream.protocol {
-            UpstreamProtocol::Udp => udp_exchange(packet, upstream).await,
-            UpstreamProtocol::Tcp => tcp_exchange(packet, upstream).await,
-            UpstreamProtocol::Doh => doh_exchange(packet, upstream, state).await,
-            UpstreamProtocol::Dot => dot_exchange(packet, upstream).await,
-        };
-        match result {
-            Ok(response) => {
-                if upstream.protocol == UpstreamProtocol::Udp
-                    && Message::from_bytes(&response).is_ok_and(|message| message.truncated())
-                {
-                    match tcp_exchange(packet, upstream).await {
-                        Ok(response) => return Ok(response),
-                        Err(error) => {
-                            last_error =
-                                Some(error.context("retry truncated UDP response over TCP"));
-                            continue;
+
+    while let Some(tag) = current {
+        let layer =
+            runtime.config.layer(&tag).cloned().ok_or_else(|| {
+                anyhow!("layer {tag:?} disappeared from a validated configuration")
+            })?;
+        current = layer.fallback.clone();
+
+        match layer.kind {
+            LayerType::Interceptor => {
+                interceptors.push(layer);
+            }
+            LayerType::Udp | LayerType::Tcp | LayerType::Doh | LayerType::Dot => {
+                let result = query_network_layer(packet, request, &layer, state, deadline).await;
+                match result {
+                    Ok(mut response) => {
+                        for interceptor in interceptors.iter().rev() {
+                            let plugin_tag = interceptor
+                                .plugin
+                                .as_deref()
+                                .expect("validated interceptor has a plugin");
+                            let plugin = runtime
+                                .config
+                                .plugin(plugin_tag)
+                                .expect("validated interceptor references a plugin");
+                            let changed = plugins::intercept_response(
+                                plugin,
+                                &mut response,
+                                ranges,
+                                runtime.preferred(plugin_tag),
+                            );
+                            if changed {
+                                debug!(layer = %interceptor.tag, plugin = %plugin_tag, "rewrote DNS response through interceptor");
+                            }
                         }
+                        return Ok(response);
+                    }
+                    Err(error) => {
+                        debug!(layer = %layer.tag, %error, "DNS layer failed; trying fallback");
+                        last_error = Some(error);
                     }
                 }
-                return Ok(response);
             }
-            Err(error) => last_error = Some(error),
         }
     }
-    Err(last_error.unwrap_or_else(|| anyhow!("no DNS upstreams configured")))
+    Err(last_error.unwrap_or_else(|| anyhow!("no network DNS layer is reachable from entry")))
 }
 
-async fn udp_exchange(packet: &[u8], upstream: &UpstreamConfig) -> Result<Vec<u8>> {
-    let bind_address = match upstream.address {
+async fn query_network_layer(
+    packet: &[u8],
+    request: &Message,
+    layer: &LayerConfig,
+    state: &SharedState,
+    deadline: Instant,
+) -> Result<Message> {
+    let duration = layer_duration(layer, deadline)?;
+    let bytes = match layer.kind {
+        LayerType::Udp => udp_exchange(packet, layer, duration).await,
+        LayerType::Tcp => tcp_exchange(packet, layer, duration).await,
+        LayerType::Doh => doh_exchange(packet, layer, state, duration).await,
+        LayerType::Dot => dot_exchange(packet, layer, duration).await,
+        LayerType::Interceptor => bail!("interceptor is not a network layer"),
+    }?;
+    let response = validate_upstream_response(request, &bytes)?;
+
+    if layer.kind != LayerType::Udp || !response.truncated() {
+        return Ok(response);
+    }
+
+    let duration = layer_duration(layer, deadline)?;
+    let bytes = tcp_exchange(packet, layer, duration)
+        .await
+        .context("retry truncated UDP response over TCP")?;
+    validate_upstream_response(request, &bytes)
+        .context("truncated UDP response's TCP retry was invalid")
+}
+
+fn layer_duration(layer: &LayerConfig, deadline: Instant) -> Result<Duration> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        bail!("DNS request deadline expired");
+    }
+    Ok(remaining.min(Duration::from_millis(layer.timeout_ms())))
+}
+
+fn validate_upstream_response(request: &Message, packet: &[u8]) -> Result<Message> {
+    let response = Message::from_bytes(packet).context("decode upstream DNS response")?;
+    if response.id() != request.id() {
+        bail!(
+            "upstream DNS response ID {} does not match request ID {}",
+            response.id(),
+            request.id()
+        );
+    }
+    if response.message_type() != MessageType::Response {
+        bail!("upstream returned a DNS query instead of a response");
+    }
+    if response.op_code() != request.op_code() {
+        bail!("upstream DNS response opcode does not match the request");
+    }
+    if response.queries() != request.queries() {
+        bail!("upstream DNS response question does not match the request");
+    }
+    Ok(response)
+}
+
+async fn udp_exchange(packet: &[u8], layer: &LayerConfig, duration: Duration) -> Result<Vec<u8>> {
+    let bind_address = match layer.address() {
         SocketAddr::V4(_) => "0.0.0.0:0",
         SocketAddr::V6(_) => "[::]:0",
     };
-    let duration = Duration::from_millis(upstream.timeout_ms);
     let response = timeout(duration, async {
         let socket = UdpSocket::bind(bind_address).await?;
-        socket.connect(upstream.address).await?;
+        socket.connect(layer.address()).await?;
         socket.send(packet).await?;
         let mut response = vec![0_u8; u16::MAX as usize];
         let length = socket.recv(&mut response).await?;
         Ok::<_, io::Error>(response[..length].to_vec())
     })
     .await
-    .context("UDP upstream request timed out")??;
+    .context("UDP layer request timed out")??;
     Ok(response)
 }
 
-async fn tcp_exchange(packet: &[u8], upstream: &UpstreamConfig) -> Result<Vec<u8>> {
+async fn tcp_exchange(packet: &[u8], layer: &LayerConfig, duration: Duration) -> Result<Vec<u8>> {
     let packet_length = u16::try_from(packet.len()).context("DNS query exceeds TCP frame limit")?;
-    let duration = Duration::from_millis(upstream.timeout_ms);
     let response = timeout(duration, async {
-        let mut stream = TcpStream::connect(upstream.address).await?;
+        let mut stream = TcpStream::connect(layer.address()).await?;
         stream.write_u16(packet_length).await?;
         stream.write_all(packet).await?;
         stream.flush().await?;
@@ -230,21 +300,20 @@ async fn tcp_exchange(packet: &[u8], upstream: &UpstreamConfig) -> Result<Vec<u8
         Ok::<_, io::Error>(response)
     })
     .await
-    .context("TCP upstream request timed out")??;
+    .context("TCP layer request timed out")??;
     Ok(response)
 }
 
-async fn dot_exchange(packet: &[u8], upstream: &UpstreamConfig) -> Result<Vec<u8>> {
+async fn dot_exchange(packet: &[u8], layer: &LayerConfig, duration: Duration) -> Result<Vec<u8>> {
     let packet_length = u16::try_from(packet.len()).context("DNS query exceeds TCP frame limit")?;
-    let server_name = upstream
+    let server_name = layer
         .server_name
         .as_ref()
-        .context("DoT upstream has no server_name")?;
+        .context("DoT layer has no server_name")?;
     let server_name = ServerName::try_from(server_name.clone())
         .with_context(|| format!("invalid DoT server_name {server_name:?}"))?;
-    let duration = Duration::from_millis(upstream.timeout_ms);
     let response = timeout(duration, async {
-        let stream = TcpStream::connect(upstream.address).await?;
+        let stream = TcpStream::connect(layer.address()).await?;
         let mut stream = dot_tls_connector().connect(server_name, stream).await?;
         stream.write_u16(packet_length).await?;
         stream.write_all(packet).await?;
@@ -255,7 +324,7 @@ async fn dot_exchange(packet: &[u8], upstream: &UpstreamConfig) -> Result<Vec<u8
         Ok::<_, anyhow::Error>(response)
     })
     .await
-    .context("DoT upstream request timed out")??;
+    .context("DoT layer request timed out")??;
     Ok(response)
 }
 
@@ -276,33 +345,39 @@ fn dot_tls_connector() -> TlsConnector {
 
 async fn doh_exchange(
     packet: &[u8],
-    upstream: &UpstreamConfig,
+    layer: &LayerConfig,
     state: &SharedState,
+    duration: Duration,
 ) -> Result<Vec<u8>> {
-    let client = state.doh_client(upstream)?;
-    let endpoint = upstream.url.as_deref().context("DoH upstream has no url")?;
-    let response = client
-        .post(endpoint)
-        .header(ACCEPT, "application/dns-message")
-        .header(CONTENT_TYPE, "application/dns-message")
-        .body(packet.to_vec())
-        .send()
-        .await
-        .context("send DoH request")?
-        .error_for_status()
-        .context("DoH upstream returned an error status")?;
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok());
-    if !content_type.is_some_and(is_dns_message_content_type) {
-        bail!("DoH upstream response has no application/dns-message content type");
-    }
-    let body = response.bytes().await.context("read DoH response body")?;
-    if body.is_empty() {
-        bail!("DoH upstream returned an empty DNS message");
-    }
-    Ok(body.to_vec())
+    let client = state.doh_client(layer)?;
+    let endpoint = layer.url.as_deref().context("DoH layer has no url")?;
+    timeout(duration, async {
+        let response = client
+            .post(endpoint)
+            .header(ACCEPT, "application/dns-message")
+            .header(CONTENT_TYPE, "application/dns-message")
+            .body(packet.to_vec())
+            .send()
+            .await
+            .context("send DoH request")?;
+        if !response.status().is_success() {
+            bail!("DoH layer returned HTTP status {}", response.status());
+        }
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok());
+        if !content_type.is_some_and(is_dns_message_content_type) {
+            bail!("DoH layer response has no application/dns-message content type");
+        }
+        let body = response.bytes().await.context("read DoH response body")?;
+        if body.is_empty() {
+            bail!("DoH layer returned an empty DNS message");
+        }
+        Ok(body.to_vec())
+    })
+    .await
+    .context("DoH layer request timed out")?
 }
 
 fn is_dns_message_content_type(value: &str) -> bool {
@@ -313,288 +388,85 @@ fn is_dns_message_content_type(value: &str) -> bool {
     })
 }
 
-fn rewrite_response(
-    message: &mut Message,
-    ranges: &[IpNet],
-    preferred: &PreferredIps,
-    ttl: u32,
-) -> bool {
-    let mut changed = false;
-    if let Some(ipv4) = preferred.ipv4 {
-        if all_cloudflare_addresses(message.answers(), AddressFamily::Ipv4, ranges) {
-            changed |= rewrite_ipv4_records(message.answers_mut(), ipv4, ttl);
-        }
-    }
-    if let Some(ipv6) = preferred.ipv6 {
-        if all_cloudflare_addresses(message.answers(), AddressFamily::Ipv6, ranges) {
-            changed |= rewrite_ipv6_records(message.answers_mut(), ipv6, ttl);
-        }
-    }
-    changed |= rewrite_svcb_records(message.answers_mut(), preferred, ranges, ttl);
-
-    if changed {
-        clear_dnssec_state(message);
-    }
-    changed
-}
-
-fn all_cloudflare_addresses(records: &[Record], family: AddressFamily, ranges: &[IpNet]) -> bool {
-    let mut found = false;
-    for record in records {
-        let address = match (family, record.data()) {
-            (AddressFamily::Ipv4, RData::A(A(address))) => IpAddr::V4(*address),
-            (AddressFamily::Ipv6, RData::AAAA(AAAA(address))) => IpAddr::V6(*address),
-            _ => continue,
-        };
-        if !contains_cloudflare_range(ranges, address) {
-            return false;
-        }
-        found = true;
-    }
-    found
-}
-
-fn rewrite_ipv4_records(records: &mut [Record], preferred: Ipv4Addr, ttl: u32) -> bool {
-    let mut changed = false;
-    for record in records {
-        let mut touched = false;
-        if let RData::A(address) = record.data_mut() {
-            if address.0 != preferred {
-                *address = A::from(preferred);
-                touched = true;
-            }
-            if record.ttl() != ttl {
-                touched = true;
-            }
-            if touched {
-                record.set_ttl(ttl);
-                changed = true;
-            }
-        }
-    }
-    changed
-}
-
-fn rewrite_ipv6_records(records: &mut [Record], preferred: Ipv6Addr, ttl: u32) -> bool {
-    let mut changed = false;
-    for record in records {
-        let mut touched = false;
-        if let RData::AAAA(address) = record.data_mut() {
-            if address.0 != preferred {
-                *address = AAAA::from(preferred);
-                touched = true;
-            }
-            if record.ttl() != ttl {
-                touched = true;
-            }
-            if touched {
-                record.set_ttl(ttl);
-                changed = true;
-            }
-        }
-    }
-    changed
-}
-
-fn rewrite_svcb_records(
-    records: &mut [Record],
-    preferred: &PreferredIps,
-    ranges: &[IpNet],
-    ttl: u32,
-) -> bool {
-    let mut changed = false;
-    for record in records {
-        let replacement = match record.data() {
-            RData::SVCB(svcb) => rewrite_svcb(svcb, preferred, ranges).map(RData::SVCB),
-            RData::HTTPS(https) => rewrite_svcb(&https.0, preferred, ranges)
-                .map(|replacement| RData::HTTPS(HTTPS(replacement))),
-            _ => None,
-        };
-        if let Some(replacement) = replacement {
-            let data_changed = record.data() != &replacement;
-            let ttl_changed = record.ttl() != ttl;
-            if data_changed {
-                record.set_data(replacement);
-            }
-            if data_changed || ttl_changed {
-                record.set_ttl(ttl);
-                changed = true;
-            }
-        }
-    }
-    changed
-}
-
-fn rewrite_svcb(svcb: &SVCB, preferred: &PreferredIps, ranges: &[IpNet]) -> Option<SVCB> {
-    let rewrite_ipv4 =
-        preferred.ipv4.is_some() && all_cloudflare_svcb_hints(svcb, AddressFamily::Ipv4, ranges);
-    let rewrite_ipv6 =
-        preferred.ipv6.is_some() && all_cloudflare_svcb_hints(svcb, AddressFamily::Ipv6, ranges);
-    if !rewrite_ipv4 && !rewrite_ipv6 {
-        return None;
-    }
-
-    let params = svcb
-        .svc_params()
-        .iter()
-        .map(|(key, value)| {
-            let value = match value {
-                SvcParamValue::Ipv4Hint(_) if rewrite_ipv4 => SvcParamValue::Ipv4Hint(IpHint(
-                    vec![A::from(preferred.ipv4.expect("checked above"))],
-                )),
-                SvcParamValue::Ipv6Hint(_) if rewrite_ipv6 => SvcParamValue::Ipv6Hint(IpHint(
-                    vec![AAAA::from(preferred.ipv6.expect("checked above"))],
-                )),
-                _ => value.clone(),
-            };
-            (*key, value)
-        })
-        .collect();
-    Some(SVCB::new(
-        svcb.svc_priority(),
-        svcb.target_name().clone(),
-        params,
-    ))
-}
-
-fn all_cloudflare_svcb_hints(svcb: &SVCB, family: AddressFamily, ranges: &[IpNet]) -> bool {
-    let mut found = false;
-    for (_, value) in svcb.svc_params() {
-        let addresses: Vec<IpAddr> = match (family, value) {
-            (AddressFamily::Ipv4, SvcParamValue::Ipv4Hint(IpHint(addresses))) => addresses
-                .iter()
-                .map(|address| IpAddr::V4(address.0))
-                .collect(),
-            (AddressFamily::Ipv6, SvcParamValue::Ipv6Hint(IpHint(addresses))) => addresses
-                .iter()
-                .map(|address| IpAddr::V6(address.0))
-                .collect(),
-            _ => continue,
-        };
-        if addresses.is_empty()
-            || addresses
-                .iter()
-                .any(|address| !contains_cloudflare_range(ranges, *address))
-        {
-            return false;
-        }
-        found = true;
-    }
-    found
-}
-
-fn contains_cloudflare_range(ranges: &[IpNet], address: IpAddr) -> bool {
-    ranges.iter().any(|range| range.contains(&address))
-}
-
-fn clear_dnssec_state(message: &mut Message) {
-    message.set_authentic_data(false);
-    message
-        .answers_mut()
-        .retain(|record| record.record_type() != RecordType::RRSIG);
-    message
-        .name_servers_mut()
-        .retain(|record| record.record_type() != RecordType::RRSIG);
-    message
-        .additionals_mut()
-        .retain(|record| record.record_type() != RecordType::RRSIG);
-    if let Some(edns) = message.extensions_mut().as_mut() {
-        edns.set_dnssec_ok(false);
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, str::FromStr};
+    use std::str::FromStr;
 
-    use hickory_proto::rr::{Name, rdata::svcb::SvcParamKey};
+    use hickory_proto::{
+        op::Query,
+        rr::{Name, RecordType},
+    };
+    use tokio::net::UdpSocket;
 
     use super::*;
+    use crate::{
+        config::{FileConfig, KeywordMatch, LayerConfig},
+        state::AppState,
+    };
 
-    fn ranges() -> Vec<IpNet> {
-        vec![IpNet::from_str("104.16.0.0/13").unwrap()]
+    fn request() -> Message {
+        let mut message = Message::new();
+        message.set_id(42);
+        message.add_query(Query::query(
+            Name::from_str("www.example.test.").unwrap(),
+            RecordType::A,
+        ));
+        message
     }
 
-    #[test]
-    fn rewrites_only_all_cloudflare_a_records() {
-        let name = Name::from_str("example.com.").unwrap();
-        let mut message = Message::new();
-        message.add_answer(Record::from_rdata(
-            name.clone(),
-            300,
-            RData::A(A::from(Ipv4Addr::new(104, 16, 1, 1))),
-        ));
-        message.add_answer(Record::from_rdata(
-            name,
-            300,
-            RData::A(A::from(Ipv4Addr::new(104, 16, 1, 2))),
-        ));
-        let preferred = PreferredIps {
-            ipv4: Some(Ipv4Addr::new(104, 16, 99, 1)),
-            ipv6: None,
-        };
+    fn response_for(request: &Message) -> Message {
+        let mut response = Message::new();
+        response.set_id(request.id());
+        response.set_message_type(MessageType::Response);
+        response.add_queries(request.queries().iter().cloned());
+        response
+    }
 
-        assert!(rewrite_response(&mut message, &ranges(), &preferred, 60));
-        for record in message.answers() {
-            assert_eq!(record.ttl(), 60);
-            assert!(matches!(
-                record.data(),
-                RData::A(A(address)) if *address == Ipv4Addr::new(104, 16, 99, 1)
-            ));
+    fn udp_layer(tag: &str, address: SocketAddr, fallback: Option<&str>) -> LayerConfig {
+        LayerConfig {
+            tag: tag.to_owned(),
+            kind: LayerType::Udp,
+            fallback: fallback.map(str::to_owned),
+            matcher: KeywordMatch::default(),
+            address: Some(address),
+            timeout_ms: Some(500),
+            url: None,
+            server_name: None,
+            plugin: None,
+        }
+    }
+
+    fn two_layer_config(first: SocketAddr, second: SocketAddr) -> FileConfig {
+        FileConfig {
+            request_timeout_ms: 1_500,
+            entry: "first".to_owned(),
+            layers: vec![
+                udp_layer("first", first, Some("second")),
+                udp_layer("second", second, None),
+            ],
+            ..FileConfig::default()
         }
     }
 
     #[test]
-    fn leaves_mixed_a_records_unchanged() {
-        let name = Name::from_str("example.com.").unwrap();
-        let mut message = Message::new();
-        message.add_answer(Record::from_rdata(
-            name.clone(),
-            300,
-            RData::A(A::from(Ipv4Addr::new(104, 16, 1, 1))),
-        ));
-        message.add_answer(Record::from_rdata(
-            name,
-            300,
-            RData::A(A::from(Ipv4Addr::new(198, 51, 100, 1))),
-        ));
-        let preferred = PreferredIps {
-            ipv4: Some(Ipv4Addr::new(104, 16, 99, 1)),
-            ipv6: None,
-        };
-
-        assert!(!rewrite_response(&mut message, &ranges(), &preferred, 60));
+    fn validates_matched_upstream_response() {
+        let request = request();
+        let response = response_for(&request).to_bytes().unwrap();
+        assert!(validate_upstream_response(&request, &response).is_ok());
     }
 
     #[test]
-    fn rewrites_https_ipv4_hints() {
-        let name = Name::from_str("example.com.").unwrap();
-        let svcb = SVCB::new(
-            1,
-            Name::root(),
-            vec![(
-                SvcParamKey::Ipv4Hint,
-                SvcParamValue::Ipv4Hint(IpHint(vec![A::from(Ipv4Addr::new(104, 16, 1, 1))])),
-            )],
-        );
-        let mut message = Message::new();
-        message.add_answer(Record::from_rdata(name, 300, RData::HTTPS(HTTPS(svcb))));
-        let preferred = PreferredIps {
-            ipv4: Some(Ipv4Addr::new(104, 16, 99, 1)),
-            ipv6: None,
-        };
+    fn rejects_wrong_dns_response_id() {
+        let request = request();
+        let mut response = response_for(&request);
+        response.set_id(43);
+        assert!(validate_upstream_response(&request, &response.to_bytes().unwrap()).is_err());
+    }
 
-        assert!(rewrite_response(&mut message, &ranges(), &preferred, 60));
-        match message.answers()[0].data() {
-            RData::HTTPS(https) => match &https.svc_params()[0].1 {
-                SvcParamValue::Ipv4Hint(IpHint(addresses)) => {
-                    assert_eq!(addresses.len(), 1);
-                    assert_eq!(addresses[0].0, Ipv4Addr::new(104, 16, 99, 1));
-                }
-                other => panic!("unexpected SVCB value: {other:?}"),
-            },
-            other => panic!("unexpected record data: {other:?}"),
-        }
+    #[test]
+    fn rejects_dns_query_as_response() {
+        let request = request();
+        assert!(validate_upstream_response(&request, &request.to_bytes().unwrap()).is_err());
     }
 
     #[test]
@@ -604,5 +476,90 @@ mod tests {
             "Application/Dns-Message; charset=binary"
         ));
         assert!(!is_dns_message_content_type("application/json"));
+    }
+
+    #[tokio::test]
+    async fn falls_back_after_a_malformed_udp_response() {
+        let first = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let first_address = first.local_addr().unwrap();
+        let first_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (_, peer) = first.recv_from(&mut buffer).await.unwrap();
+            first.send_to(&[0_u8, 1], peer).await.unwrap();
+        });
+
+        let second = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let second_address = second.local_addr().unwrap();
+        let second_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = second.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            second
+                .send_to(&response_for(&request).to_bytes().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+
+        let request = request();
+        let packet = request.to_bytes().unwrap();
+        let state = AppState::new(two_layer_config(first_address, second_address), Vec::new());
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.id(), request.id());
+        first_task.await.unwrap();
+        second_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn valid_servfail_does_not_fall_back_to_the_next_layer() {
+        let first = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let first_address = first.local_addr().unwrap();
+        let first_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = first.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            let mut response = response_for(&request);
+            response.set_response_code(ResponseCode::ServFail);
+            first
+                .send_to(&response.to_bytes().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+
+        let second = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let second_address = second.local_addr().unwrap();
+        let request = request();
+        let packet = request.to_bytes().unwrap();
+        let state = AppState::new(two_layer_config(first_address, second_address), Vec::new());
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.response_code(), ResponseCode::ServFail);
+        let mut buffer = [0_u8; 512];
+        assert!(
+            timeout(Duration::from_millis(100), second.recv_from(&mut buffer))
+                .await
+                .is_err()
+        );
+        first_task.await.unwrap();
     }
 }

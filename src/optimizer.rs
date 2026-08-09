@@ -20,7 +20,7 @@ use tokio_rustls::TlsConnector;
 use tracing::{debug, info, warn};
 
 use crate::{
-    config::OptimizerConfig,
+    config::{OptimizerConfig, PluginConfig},
     state::{PreferredIps, SharedState},
 };
 
@@ -32,31 +32,46 @@ struct ProbeResult {
 
 pub async fn run_loop(state: SharedState) {
     loop {
-        let config = state.config.load_full();
-        let settings = config.optimizer.clone();
-        if settings.enabled {
+        let runtime = state.runtime.load_full();
+        let plugins: Vec<PluginConfig> = runtime
+            .config
+            .cloudflare_preferred_plugins()
+            .cloned()
+            .collect();
+        let mut next_interval_secs = None;
+
+        for plugin in &plugins {
+            let settings = &plugin.optimizer;
+            if !settings.enabled {
+                continue;
+            }
+            next_interval_secs = Some(
+                next_interval_secs
+                    .unwrap_or(settings.interval_secs)
+                    .min(settings.interval_secs),
+            );
             let ranges = state.cloudflare_ranges.load_full();
-            match choose_preferred(&settings, ranges.as_slice()).await {
+            match choose_preferred(settings, ranges.as_slice()).await {
                 Ok(selection) if !selection.is_empty() => {
-                    let mut next = state.preferred_ips.load_full().as_ref().clone();
-                    if selection.ipv4.is_some() {
-                        next.ipv4 = selection.ipv4;
+                    if let Some(next) = state.update_preferred(plugin, &selection) {
+                        info!(
+                            plugin = %plugin.tag,
+                            preferred = ?next,
+                            "updated preferred Cloudflare IPs from the integrated probe"
+                        );
                     }
-                    if selection.ipv6.is_some() {
-                        next.ipv6 = selection.ipv6;
-                    }
-                    state.preferred_ips.store(Arc::new(next.clone()));
-                    info!(preferred = ?next, "updated preferred Cloudflare IPs from the integrated probe");
                 }
-                Ok(_) => warn!("Cloudflare probe did not produce a usable preferred IP"),
+                Ok(_) => {
+                    warn!(plugin = %plugin.tag, "Cloudflare probe did not produce a usable preferred IP")
+                }
                 Err(error) => {
-                    warn!(%error, "Cloudflare probe round failed; retaining previous preferred IPs")
+                    warn!(plugin = %plugin.tag, %error, "Cloudflare probe round failed; retaining previous preferred IPs")
                 }
             }
         }
 
         tokio::select! {
-            _ = sleep(Duration::from_secs(settings.interval_secs.max(1))) => {}
+            _ = sleep(Duration::from_secs(next_interval_secs.unwrap_or(60).max(1))) => {}
             _ = state.config_changed.notified() => {}
         }
     }

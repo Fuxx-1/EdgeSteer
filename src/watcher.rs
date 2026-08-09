@@ -1,7 +1,6 @@
 use std::{
     net::IpAddr,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
 };
 
@@ -52,7 +51,7 @@ pub fn start(path: PathBuf, state: SharedState) -> Result<RecommendedWatcher> {
                             "listener configuration changed; the existing listener remains active until restart"
                         );
                     }
-                    info!("reloaded configuration; new upstream settings are active");
+                    info!("reloaded configuration; new layer settings are active");
                 }
                 Err(error) => {
                     warn!(%error, "configuration reload rejected; keeping active settings")
@@ -65,41 +64,50 @@ pub fn start(path: PathBuf, state: SharedState) -> Result<RecommendedWatcher> {
 }
 
 pub fn apply_hot_reload(state: &SharedState, mut next: FileConfig) -> Result<bool> {
-    let current = state.config.load_full();
-    let listener_restart_needed = next.listener != current.listener;
-    let preferred_changed = next.preferred != current.preferred;
-    let upstreams_changed = next.upstreams != current.upstreams;
-    if listener_restart_needed {
-        next.listener = current.listener.clone();
-    }
+    // Validate both the saved listener and the currently bound listener. A
+    // listener change cannot be applied without a restart, so the second pass
+    // prevents a newly saved local layer from forwarding back to the old socket.
     next.validate()?;
-    validate_preferred_ranges(&next, state.cloudflare_ranges.load().as_slice())?;
-    if preferred_changed {
-        state.replace_preferred_with_config(&next.preferred);
+    let current = state.runtime.load_full();
+    let listener_restart_needed = next.listener != current.config.listener;
+    let layers_changed = next.layers != current.config.layers;
+    if listener_restart_needed {
+        next.listener = current.config.listener.clone();
+        next.validate()?;
     }
-    if upstreams_changed {
+    validate_preferred_ranges(&next, state.cloudflare_ranges.load().as_slice())?;
+
+    state.replace_config(next);
+    if layers_changed {
         state.clear_doh_clients();
     }
-    state.config.store(Arc::new(next));
     state.config_changed.notify_waiters();
     Ok(listener_restart_needed)
 }
 
 pub fn validate_preferred_ranges(config: &FileConfig, ranges: &[IpNet]) -> Result<()> {
-    if let Some(address) = config.preferred.ipv4 {
-        if !ranges
-            .iter()
-            .any(|range| range.contains(&IpAddr::V4(address)))
-        {
-            bail!("preferred.ipv4 {address} is outside the active Cloudflare IP ranges");
+    for plugin in config.cloudflare_preferred_plugins() {
+        if let Some(address) = plugin.preferred.ipv4 {
+            if !ranges
+                .iter()
+                .any(|range| range.contains(&IpAddr::V4(address)))
+            {
+                bail!(
+                    "plugin {:?} preferred.ipv4 {address} is outside the active Cloudflare IP ranges",
+                    plugin.tag
+                );
+            }
         }
-    }
-    if let Some(address) = config.preferred.ipv6 {
-        if !ranges
-            .iter()
-            .any(|range| range.contains(&IpAddr::V6(address)))
-        {
-            bail!("preferred.ipv6 {address} is outside the active Cloudflare IP ranges");
+        if let Some(address) = plugin.preferred.ipv6 {
+            if !ranges
+                .iter()
+                .any(|range| range.contains(&IpAddr::V6(address)))
+            {
+                bail!(
+                    "plugin {:?} preferred.ipv6 {address} is outside the active Cloudflare IP ranges",
+                    plugin.tag
+                );
+            }
         }
     }
     Ok(())
@@ -113,32 +121,49 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::{ListenerConfig, UpstreamConfig},
+        config::{
+            LayerConfig, LayerType, ListenerConfig, PluginConfig, PluginType, PreferredConfig,
+        },
         state::AppState,
     };
 
     fn config(upstream: &str) -> FileConfig {
         FileConfig {
-            upstreams: vec![UpstreamConfig {
-                address: upstream.parse().unwrap(),
-                protocol: Default::default(),
-                timeout_ms: 1_000,
+            entry: "local".to_owned(),
+            layers: vec![LayerConfig {
+                tag: "local".to_owned(),
+                kind: LayerType::Udp,
+                fallback: None,
+                matcher: Default::default(),
+                address: Some(upstream.parse().unwrap()),
+                timeout_ms: Some(1_000),
                 url: None,
                 server_name: None,
+                plugin: None,
             }],
             ..FileConfig::default()
         }
     }
 
+    fn preferred_plugin(ipv4: Option<Ipv4Addr>) -> PluginConfig {
+        PluginConfig {
+            tag: "preferred".to_owned(),
+            kind: PluginType::CloudflarePreferred,
+            rewrite_ttl_secs: 60,
+            preferred: PreferredConfig { ipv4, ipv6: None },
+            optimizer: Default::default(),
+        }
+    }
+
     #[test]
-    fn reload_replaces_upstreams_without_rebinding_listener() {
+    fn reload_replaces_layers_without_rebinding_listener() {
         let ranges = vec![IpNet::from_str("104.16.0.0/13").unwrap()];
         let state = AppState::new(config("1.1.1.1:53"), ranges);
         let changed = apply_hot_reload(&state, config("8.8.8.8:53")).unwrap();
 
         assert!(!changed);
         assert_eq!(
-            state.config.load().upstreams[0].address,
+            state.runtime.load().config.layers[0].address(),
             "8.8.8.8:53".parse().unwrap()
         );
     }
@@ -154,7 +179,10 @@ mod tests {
         };
 
         assert!(apply_hot_reload(&state, replacement).unwrap());
-        assert_eq!(state.config.load().listener, ListenerConfig::default());
+        assert_eq!(
+            state.runtime.load().config.listener,
+            ListenerConfig::default()
+        );
     }
 
     #[test]
@@ -162,7 +190,9 @@ mod tests {
         let ranges = vec![IpNet::from_str("104.16.0.0/13").unwrap()];
         let state = AppState::new(config("1.1.1.1:53"), ranges);
         let mut replacement = config("8.8.8.8:53");
-        replacement.preferred.ipv4 = Some(Ipv4Addr::new(198, 51, 100, 1));
+        replacement
+            .plugins
+            .push(preferred_plugin(Some(Ipv4Addr::new(198, 51, 100, 1))));
 
         assert!(apply_hot_reload(&state, replacement).is_err());
     }
@@ -171,11 +201,13 @@ mod tests {
     fn reload_can_clear_static_preferred_ips() {
         let ranges = vec![IpNet::from_str("104.16.0.0/13").unwrap()];
         let mut initial = config("1.1.1.1:53");
-        initial.preferred.ipv4 = Some(Ipv4Addr::new(104, 16, 99, 1));
+        initial
+            .plugins
+            .push(preferred_plugin(Some(Ipv4Addr::new(104, 16, 99, 1))));
         let state = AppState::new(initial, ranges);
 
         apply_hot_reload(&state, config("8.8.8.8:53")).unwrap();
 
-        assert!(state.preferred_ips.load().is_empty());
+        assert!(state.runtime.load().preferred("preferred").is_none());
     }
 }

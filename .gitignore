@@ -4,4 +4,4 @@
 *.swo
 /.idea/
 /.vscode/
-/edgesteer.toml
+/edgesteer.json
