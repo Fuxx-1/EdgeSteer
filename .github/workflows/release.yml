@@ -77,6 +77,7 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/edgesteer dist/edgesteer
           cp README.md config.example.json LICENSE dist/
+          cp -R docs dist/docs
           tar -C dist -czf EdgeSteer-${{ matrix.asset }}.tar.gz .
       - name: Package Windows archive
         if: matrix.archive == 'zip'
@@ -85,6 +86,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/edgesteer.exe" "dist/edgesteer.exe"
           Copy-Item README.md, config.example.json, LICENSE dist/
+          Copy-Item docs "dist/docs" -Recurse
           Compress-Archive -Path dist/* -DestinationPath "EdgeSteer-${{ matrix.asset }}.zip" -Force
       - uses: actions/upload-artifact@v5
         with:
