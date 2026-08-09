@@ -192,7 +192,19 @@ cargo test --all-targets
 cargo build --release
 ```
 
-GitHub Actions runs formatting, Clippy, tests, and release builds on Linux, macOS, and Windows. Pushing a `v*` tag builds the release archives and creates a GitHub Release.
+GitHub Actions runs formatting, Clippy, tests, and release builds on Linux, macOS, and Windows. A valid Semantic Version tag triggers a GitHub Release with the four archives above:
+
+- `v1.2.3` creates a normal release.
+- `v1.2.3-alpha.1`, `v1.2.3-beta.1`, or `v1.2.3-rc.1` creates a pre-release.
+
+For example:
+
+```sh
+git tag -a v0.1.0 -m "EdgeSteer v0.1.0"
+git push origin v0.1.0
+```
+
+Tags that do not follow this format fail before the platform builds begin, preventing accidental releases.
 
 ## License
 
