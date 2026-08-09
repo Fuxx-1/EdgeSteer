@@ -66,10 +66,10 @@ async fn serve_udp(socket: Arc<UdpSocket>, state: SharedState) -> Result<()> {
         let socket = socket.clone();
         let state = state.clone();
         tokio::spawn(async move {
-            if let Some(response) = process_packet(&packet, &state).await
-                && let Err(error) = socket.send_to(&response, peer).await
-            {
-                debug!(%peer, %error, "could not send UDP DNS response");
+            if let Some(response) = process_packet(&packet, &state).await {
+                if let Err(error) = socket.send_to(&response, peer).await {
+                    debug!(%peer, %error, "could not send UDP DNS response");
+                }
             }
         });
     }
@@ -320,15 +320,15 @@ fn rewrite_response(
     ttl: u32,
 ) -> bool {
     let mut changed = false;
-    if let Some(ipv4) = preferred.ipv4
-        && all_cloudflare_addresses(message.answers(), AddressFamily::Ipv4, ranges)
-    {
-        changed |= rewrite_ipv4_records(message.answers_mut(), ipv4, ttl);
+    if let Some(ipv4) = preferred.ipv4 {
+        if all_cloudflare_addresses(message.answers(), AddressFamily::Ipv4, ranges) {
+            changed |= rewrite_ipv4_records(message.answers_mut(), ipv4, ttl);
+        }
     }
-    if let Some(ipv6) = preferred.ipv6
-        && all_cloudflare_addresses(message.answers(), AddressFamily::Ipv6, ranges)
-    {
-        changed |= rewrite_ipv6_records(message.answers_mut(), ipv6, ttl);
+    if let Some(ipv6) = preferred.ipv6 {
+        if all_cloudflare_addresses(message.answers(), AddressFamily::Ipv6, ranges) {
+            changed |= rewrite_ipv6_records(message.answers_mut(), ipv6, ttl);
+        }
     }
     changed |= rewrite_svcb_records(message.answers_mut(), preferred, ranges, ttl);
 
