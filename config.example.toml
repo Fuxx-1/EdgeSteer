@@ -45,7 +45,7 @@ timeout_ms = 2000
 # 内置探测器不依赖 CloudflareSpeedTest、CSV 或外部脚本。
 enabled = true
 interval_secs = 21600
-test_host = "speed.cloudflare.com"
+test_host = "www.cloudflare.com"
 test_path = "/cdn-cgi/trace"
 test_port = 443
 timeout_ms = 3000

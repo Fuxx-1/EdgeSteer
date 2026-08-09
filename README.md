@@ -131,7 +131,7 @@ ipv4 = "104.16.99.1"
 
 Set `optimizer.enabled = false` for a fixed address. When the optimizer is enabled, a successful probe replaces the corresponding address family and retains the last good result if a later probe fails. Add IPv6 candidates only when the host has a working IPv6 path.
 
-The optimizer measures TCP connection, TLS handshake, and an HTTPS request to `speed.cloudflare.com`; it does not claim to be a full download-throughput benchmark. Keep candidate ranges narrow and verify with real application traffic when bandwidth is the deciding factor.
+The optimizer measures TCP connection, TLS handshake, and an HTTPS request to `www.cloudflare.com`; it does not claim to be a full download-throughput benchmark. Keep candidate ranges narrow and verify with real application traffic when bandwidth is the deciding factor.
 
 ## Use As System DNS
 
