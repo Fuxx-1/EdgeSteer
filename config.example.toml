@@ -1,0 +1,60 @@
+# 仅监听本机；系统 DNS 需要使用 53 端口。
+[listener]
+address = "127.0.0.1:53"
+allow_remote = false
+
+[cloudflare]
+# 改写后的 A/AAAA/HTTPS hint 缓存时间。
+rewrite_ttl_secs = 60
+# 从 Cloudflare 官方网段列表刷新识别规则的间隔。
+range_refresh_secs = 86400
+
+# 手工指定的启动初始值。关闭 optimizer 后，它就是固定优选 IP。
+# 留空表示等待内置探测器选择；保存后可热更新或清空。
+[preferred]
+# ipv4 = "104.16.99.1"
+# ipv6 = "2606:4700:0000:0000:0000:0000:0000:1111"
+
+# 按顺序尝试；前一个超时或失败时才使用后一个。
+# DoH/DoT 都使用数值 address，避免系统 DNS 指向本程序后产生启动解析循环。
+# DoH 的 address 是 URL 主机名的固定 bootstrap IP，端口须与 URL 一致；
+# TLS 仍会使用 URL 主机名验证证书和发送 SNI。
+[[upstreams]]
+address = "1.1.1.1:443"
+protocol = "doh"
+url = "https://cloudflare-dns.com/dns-query"
+timeout_ms = 3000
+
+[[upstreams]]
+address = "1.1.1.1:853"
+protocol = "dot"
+server_name = "cloudflare-dns.com"
+timeout_ms = 3000
+
+[[upstreams]]
+address = "223.5.5.5:53"
+protocol = "udp"
+timeout_ms = 2000
+
+[[upstreams]]
+address = "119.29.29.29:53"
+protocol = "udp"
+timeout_ms = 2000
+
+[optimizer]
+# 内置探测器不依赖 CloudflareSpeedTest、CSV 或外部脚本。
+enabled = true
+interval_secs = 21600
+test_host = "speed.cloudflare.com"
+test_path = "/cdn-cgi/trace"
+test_port = 443
+timeout_ms = 3000
+concurrency = 16
+samples_per_cidr = 16
+max_candidates = 64
+# 可以填单个 IP 或 CIDR。CIDR 每轮随机抽样 samples_per_cidr 个地址。
+# 需要 IPv6 优选时另行加入 Cloudflare IPv6 CIDR 或 IPv6 地址。
+candidates = [
+  "104.16.0.0/13",
+  "172.64.0.0/13",
+]

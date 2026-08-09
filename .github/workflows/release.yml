@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: x86_64-unknown-linux-musl
+            extension: tar.gz
+            archive: tar
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset: x86_64-apple-darwin
+            extension: tar.gz
+            archive: tar
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: aarch64-apple-darwin
+            extension: tar.gz
+            archive: tar
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: x86_64-pc-windows-msvc
+            extension: zip
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux musl toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package Unix archive
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/edgesteer dist/edgesteer
+          cp README.md config.example.toml LICENSE dist/
+          tar -C dist -czf EdgeSteer-${{ matrix.asset }}.tar.gz .
+      - name: Package Windows archive
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/edgesteer.exe" "dist/edgesteer.exe"
+          Copy-Item README.md, config.example.toml, LICENSE dist/
+          Compress-Archive -Path dist/* -DestinationPath "EdgeSteer-${{ matrix.asset }}.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edgesteer-${{ matrix.asset }}
+          path: EdgeSteer-${{ matrix.asset }}.${{ matrix.extension }}
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes release-assets/*
