@@ -86,7 +86,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/edgesteer.exe" "dist/edgesteer.exe"
           Copy-Item README.md, config.example.toml, LICENSE dist/
           Compress-Archive -Path dist/* -DestinationPath "EdgeSteer-${{ matrix.asset }}.zip" -Force
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: edgesteer-${{ matrix.asset }}
           path: EdgeSteer-${{ matrix.asset }}.${{ matrix.extension }}
@@ -96,7 +96,7 @@ jobs:
     needs: [validate-tag, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: release-assets
           merge-multiple: true
