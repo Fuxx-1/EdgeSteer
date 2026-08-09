@@ -194,14 +194,16 @@ fn expand_candidates(settings: &OptimizerConfig, ranges: &[IpNet]) -> Result<Vec
     let mut rng = rand::rng();
 
     'candidates: for candidate in &settings.candidates {
+        let remaining = settings.max_candidates.saturating_sub(result.len());
+        if remaining == 0 {
+            break;
+        }
         let values = if let Ok(address) = candidate.parse::<IpAddr>() {
             vec![address]
         } else {
             let network = IpNet::from_str(candidate)
                 .with_context(|| format!("parse optimizer candidate {candidate:?}"))?;
-            (0..settings.samples_per_cidr)
-                .map(|_| random_address_in_network(network, &mut rng))
-                .collect()
+            random_addresses_in_network(network, settings.samples_per_cidr.min(remaining), &mut rng)
         };
 
         for address in values {
@@ -222,6 +224,41 @@ fn expand_candidates(settings: &OptimizerConfig, ranges: &[IpNet]) -> Result<Vec
         bail!("no optimizer candidates are in the active Cloudflare IP ranges");
     }
     Ok(result)
+}
+
+fn random_addresses_in_network(
+    network: IpNet,
+    sample_count: usize,
+    rng: &mut impl Rng,
+) -> Vec<IpAddr> {
+    let target = sample_count.min(selectable_address_count(network));
+    let mut values = Vec::with_capacity(target);
+    let mut seen = HashSet::with_capacity(target);
+    while values.len() < target {
+        let address = random_address_in_network(network, rng);
+        if seen.insert(address) {
+            values.push(address);
+        }
+    }
+    values
+}
+
+fn selectable_address_count(network: IpNet) -> usize {
+    let count = match network {
+        IpNet::V4(network) => {
+            let host_bits = 32 - network.prefix_len();
+            let total = 1_u128 << host_bits;
+            if host_bits <= 1 { total } else { total - 2 }
+        }
+        IpNet::V6(network) => {
+            let host_bits = 128 - network.prefix_len();
+            if host_bits == 128 {
+                return usize::MAX;
+            }
+            1_u128 << host_bits
+        }
+    };
+    usize::try_from(count).unwrap_or(usize::MAX)
 }
 
 fn random_address_in_network(network: IpNet, rng: &mut impl Rng) -> IpAddr {
@@ -284,6 +321,19 @@ mod tests {
                 .iter()
                 .all(|candidate| ranges[0].contains(candidate))
         );
+    }
+
+    #[test]
+    fn does_not_duplicate_cidr_samples() {
+        let mut settings = settings();
+        settings.candidates = vec!["104.16.0.0/30".to_owned()];
+        settings.samples_per_cidr = 4;
+        let ranges = vec![IpNet::from_str("104.16.0.0/13").unwrap()];
+
+        let candidates = expand_candidates(&settings, &ranges).expect("candidates expand");
+
+        assert_eq!(candidates.len(), 2);
+        assert_ne!(candidates[0], candidates[1]);
     }
 
     #[test]
