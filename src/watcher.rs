@@ -86,19 +86,21 @@ pub fn apply_hot_reload(state: &SharedState, mut next: FileConfig) -> Result<boo
 }
 
 pub fn validate_preferred_ranges(config: &FileConfig, ranges: &[IpNet]) -> Result<()> {
-    if let Some(address) = config.preferred.ipv4
-        && !ranges
+    if let Some(address) = config.preferred.ipv4 {
+        if !ranges
             .iter()
             .any(|range| range.contains(&IpAddr::V4(address)))
-    {
-        bail!("preferred.ipv4 {address} is outside the active Cloudflare IP ranges");
+        {
+            bail!("preferred.ipv4 {address} is outside the active Cloudflare IP ranges");
+        }
     }
-    if let Some(address) = config.preferred.ipv6
-        && !ranges
+    if let Some(address) = config.preferred.ipv6 {
+        if !ranges
             .iter()
             .any(|range| range.contains(&IpAddr::V6(address)))
-    {
-        bail!("preferred.ipv6 {address} is outside the active Cloudflare IP ranges");
+        {
+            bail!("preferred.ipv6 {address} is outside the active Cloudflare IP ranges");
+        }
     }
     Ok(())
 }
