@@ -3,50 +3,54 @@
 [![CI](https://github.com/Fuxx-1/EdgeSteer/actions/workflows/ci.yml/badge.svg)](https://github.com/Fuxx-1/EdgeSteer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-EdgeSteer is a local Rust DNS steering proxy for preferred Cloudflare edge IPs. It uses a JSON-defined, multi-layer fallback graph and built-in response interceptor plugins. It runs on macOS, Linux, and Windows.
+中文 | [English](docs/en/README.md)
 
-It identifies Cloudflare from returned IP addresses, not from domain spelling. A domain can be hosted behind Cloudflare even if neither its name nor its CNAME contains `cf` or `cloudflare`; EdgeSteer checks the returned A, AAAA, HTTPS, and SVCB address data against Cloudflare's published networks.
+EdgeSteer 是一个跨 macOS、Linux 和 Windows 的本地 Rust DNS steering proxy。它通过 JSON 配置多级 upstream 回退，并用内置拦截器把已确认属于 Cloudflare 的地址改写为当前优选 IP。
 
-## How it works
+EdgeSteer 判断的是 DNS 响应里的地址，而不是域名文字。一个站点即使域名和 CNAME 都不含 `cf` 或 `cloudflare`，只要返回的 A、AAAA、HTTPS 或 SVCB 地址属于 Cloudflare 官方网段，就可以进入优选流程；混合返回或无法确认时保持原响应。
 
-The sample configuration is the following chain:
+## 工作方式
+
+默认示例链路如下：
 
 ```mermaid
 flowchart LR
-    Client["DNS client"] --> Preferred["preferred interceptor"]
+    Client["DNS client"] --> Match["keyword match"]
+    Match --> Preferred["preferred interceptor"]
     Preferred --> CF["Cloudflare DoH"]
     CF --> Tencent["Tencent DoH"]
     Tencent --> Local["local DNS"]
     Local --> Client
 ```
 
-`preferred` is a response interceptor, not a DNS resolver. It forwards the request to its fallback, then rewrites an answer only when every address in the relevant family is verified as Cloudflare. Mixed and non-Cloudflare answers are returned unchanged. A rewrite removes DNSSEC authentication state (`AD`, `DO`, and RRSIG records), so modified data is never represented as authenticated.
+`preferred` 是响应拦截器，不是独立 resolver。它先让后继 upstream 返回完整 DNS 响应，再在地址全部通过 Cloudflare 网段校验时改写 A、AAAA 以及 HTTPS/SVCB hints。改写会清除 DNSSEC 的 `AD`、`DO` 和 RRSIG，避免把已修改的数据标成已认证。
 
-The built-in optimizer probes Cloudflare addresses over HTTPS and keeps the best reachable IPv4 and IPv6 address independently. It is not a bandwidth benchmark; verify real traffic when throughput matters.
+内置 optimizer 以 TCP + TLS + HTTP 探测 Cloudflare 地址，要求测试端点返回 2xx 且 `server: cloudflare`，并独立选择最快的 IPv4 与 IPv6。它是连通性和时延选择器，不等同于真实业务带宽测试。
 
-## Install
+## 快速开始
 
-Release archives are produced for Linux x86_64, macOS Intel, macOS Apple Silicon, and Windows x86_64. Until a tagged release exists, build from source with Rust 1.85 or newer:
+需要 Rust 1.85 或更新版本。发布包覆盖 Linux x86_64、macOS Intel、macOS Apple Silicon 和 Windows x86_64。
 
 ```sh
 git clone https://github.com/Fuxx-1/EdgeSteer.git
 cd EdgeSteer
 cp config.example.json edgesteer.json
-cargo build --release
+cargo build --locked --release
 ./target/release/edgesteer --config edgesteer.json --check-config
+RUST_LOG=info ./target/release/edgesteer --config edgesteer.json
 ```
 
-On Windows PowerShell:
+Windows PowerShell：
 
 ```powershell
 Copy-Item config.example.json edgesteer.json
-cargo build --release
+cargo build --locked --release
 .\target\release\edgesteer.exe --config edgesteer.json --check-config
+$env:RUST_LOG = "info"
+.\target\release\edgesteer.exe --config edgesteer.json
 ```
 
-## First run
-
-Use a high local port before changing system DNS:
+首次运行建议使用高端口，不要立即改系统 DNS：
 
 ```json
 {
@@ -54,173 +58,32 @@ Use a high local port before changing system DNS:
 }
 ```
 
-Merge that change into `edgesteer.json`, then run:
+验证：
 
 ```sh
-RUST_LOG=info ./target/release/edgesteer --config edgesteer.json
 dig @127.0.0.1 -p 53535 www.cloudflare.com A +short
 ```
 
-On Windows:
+完整字段、DoH/DoT 约束、关键词和插件示例见[配置文档](docs/zh/configuration.md)。
 
-```powershell
-$env:RUST_LOG = "info"
-.\target\release\edgesteer.exe --config edgesteer.json
-Resolve-DnsName www.cloudflare.com -Server 127.0.0.1 -Type A
-```
+## 文档导航
 
-## Configuration
-
-Copy [`config.example.json`](config.example.json) and adapt it. Its meaningful structure is:
-
-```json
-{
-  "request_timeout_ms": 8000,
-  "entry": "preferred",
-  "plugins": [
-    {
-      "tag": "cloudflare-preferred",
-      "type": "cloudflare_preferred",
-      "rewrite_ttl_secs": 60,
-      "preferred": { "ipv4": "104.16.99.1" },
-      "optimizer": { "enabled": false }
-    }
-  ],
-  "layers": [
-    {
-      "tag": "preferred",
-      "type": "interceptor",
-      "plugin": "cloudflare-preferred",
-      "fallback": "cloudflare-doh"
-    },
-    {
-      "tag": "cloudflare-doh",
-      "type": "doh",
-      "address": "1.1.1.1:443",
-      "url": "https://cloudflare-dns.com/dns-query",
-      "fallback": "tencent-doh"
-    },
-    {
-      "tag": "tencent-doh",
-      "type": "doh",
-      "address": "120.53.53.53:443",
-      "url": "https://doh.pub/dns-query",
-      "fallback": "local"
-    },
-    {
-      "tag": "local",
-      "type": "udp",
-      "address": "192.168.1.1:53"
-    }
-  ]
-}
-```
-
-`local` must be a numeric, explicit resolver address, such as a router, SmartDNS instance, or traditional resolver. It never means “ask the operating system resolver”: after system DNS points to EdgeSteer, doing so would form a loop. EdgeSteer rejects a layer that overlaps its listener address.
-
-### Layers and fallback
-
-Each layer has a unique `tag`, a `type`, and an optional `fallback`. The request starts at `entry`; a transport/TLS/HTTP/invalid-DNS failure continues at the configured fallback. A valid DNS response, including NXDOMAIN, NODATA, SERVFAIL, or REFUSED, is returned immediately to avoid querying more providers and changing answers.
-
-Supported network layer types are:
-
-| Type | Required fields | Notes |
+| 主题 | 中文 | English |
 | --- | --- | --- |
-| `udp` | `address` | Traditional DNS over UDP. A truncated response is retried over TCP to the same endpoint before fallback. |
-| `tcp` | `address` | Traditional DNS over TCP. |
-| `doh` | `address`, `url` | `address` is a numeric bootstrap endpoint; URL host remains the TLS SNI, HTTP Host, and certificate name. |
-| `dot` | `address`, `server_name` | DNS over TLS with mandatory SNI/certificate verification. |
-| `interceptor` | `plugin`, `fallback` | Runs the built-in plugin on the successful fallback response. |
+| 项目介绍与快速开始 | 本页 | [README](docs/en/README.md) |
+| 架构与请求生命周期 | [architecture.md](docs/zh/architecture.md) | [architecture.md](docs/en/architecture.md) |
+| JSON 配置、匹配与插件 | [configuration.md](docs/zh/configuration.md) | [configuration.md](docs/en/configuration.md) |
+| 安装、运行、热重载与排障 | [operations.md](docs/zh/operations.md) | [operations.md](docs/en/operations.md) |
+| 开发、测试、CI 与发布 | [development.md](docs/zh/development.md) | [development.md](docs/en/development.md) |
 
-Every upstream DNS response is decoded and checked for a matching transaction ID, QR flag, opcode, and question before it is accepted. DoH accepts only HTTPS, disables inherited proxy environment settings, follows no redirects, and requires `application/dns-message`.
+## 重要边界
 
-### Direct keyword matching
+- 配置文件是严格 JSON，未知字段会被拒绝；`entry`、layer、fallback 和 plugin 引用必须存在，fallback 不能成环。
+- `local` 必须填写明确的数值 resolver 地址，例如路由器或 SmartDNS，不能隐式调用系统 resolver，否则系统 DNS 指向 EdgeSteer 后会形成回环。
+- 只有网络、TLS、HTTP、空响应、畸形 DNS 或响应关联校验失败才进入 fallback。有效的 NXDOMAIN、NODATA、SERVFAIL 和 REFUSED 会直接返回。
+- plugin 只允许静态编译进程序的 builtin 实现，JSON 不会加载动态库、脚本或外部命令。
+- 默认只监听回环地址。`allow_remote: true` 会把它变成局域网 DNS 服务，应由使用者自行承担访问控制和滥用风险。
 
-Any layer can declare a `match` block. For a one-question DNS request, EdgeSteer selects the first matching layer in `layers` declaration order and begins there; it then follows that layer's own fallback only. For example, this sends `.cn` names straight to Tencent DoH and does not query Cloudflare DoH first:
+## 许可证
 
-```json
-{
-  "tag": "tencent-doh",
-  "type": "doh",
-  "address": "120.53.53.53:443",
-  "url": "https://doh.pub/dns-query",
-  "fallback": "local",
-  "match": {
-    "mode": "label",
-    "keywords": ["cn"]
-  }
-}
-```
-
-`label` is the default and matches a complete, case-insensitive DNS label; `local` matches `printer.local` but not `notlocal.example`. Use `"mode": "contains"` only when an explicit literal substring rule is intended. Multiple-question requests always use `entry` so one DNS packet is not sent to different providers.
-
-A direct rule starts at its target layer. Therefore, matching a resolver bypasses interceptors earlier in the chain. Put the rule on `preferred` when that response must still be optimized, or arrange the graph so the interceptor is on the selected path.
-
-### Preferred plugin
-
-`cloudflare_preferred` is a statically built-in plugin; JSON cannot load a dynamic library or command. It supports optional static startup values:
-
-```json
-{
-  "tag": "cloudflare-preferred",
-  "type": "cloudflare_preferred",
-  "preferred": {
-    "ipv4": "104.16.99.1",
-    "ipv6": "2606:4700::1111"
-  },
-  "optimizer": { "enabled": false }
-}
-```
-
-Static values are checked against the current Cloudflare network list. When the optimizer is enabled, a successful probe replaces the corresponding family and a failed probe retains the last good value.
-
-## Hot reload
-
-Saving a valid JSON file reloads it after a short debounce. Future requests use a single new runtime snapshot; in-flight requests retain their old snapshot. Invalid JSON, unknown tags, cycles, malformed upstreams, and invalid static preferred IPs are rejected while the last valid configuration remains active.
-
-Changing `listener.address` or `allow_remote` is recorded but needs a process restart because the listening sockets cannot be rebound atomically.
-
-## Use as system DNS
-
-Only use port 53 after direct high-port tests pass. The default loopback listener is intentional; `allow_remote: true` should not be exposed publicly because EdgeSteer is not a hardened public recursive resolver.
-
-The listener limits itself to 128 in-flight DNS queries. Under a sudden UDP burst it drops excess requests so normal DNS client retries cannot exhaust process file descriptors.
-
-On macOS, point the desired network service at loopback after EdgeSteer is listening:
-
-```sh
-sudo networksetup -setdnsservers "Wi-Fi" 127.0.0.1
-```
-
-Restore DHCP DNS with:
-
-```sh
-sudo networksetup -setdnsservers "Wi-Fi" Empty
-```
-
-On Linux and Windows, configure the active network manager or adapter to use `127.0.0.1` after the process is running. Browser or application Secure DNS can bypass the system resolver; configure those clients to use the system resolver when EdgeSteer should process their queries.
-
-## Development and releases
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test --locked --all-targets
-cargo build --locked --release
-```
-
-GitHub Actions runs formatting, Clippy, tests, and native builds on Linux, macOS, and Windows. Pushing a semantic tag creates a GitHub Release:
-
-- `v1.2.3` creates a normal release.
-- `v1.2.3-alpha.1`, `v1.2.3-beta.1`, or `v1.2.3-rc.1` creates a pre-release.
-
-```sh
-git tag -a v0.1.0 -m "EdgeSteer v0.1.0"
-git push origin v0.1.0
-```
-
-## License
-
-MIT. See [LICENSE](LICENSE).
-
-Cloudflare is a trademark of Cloudflare, Inc. EdgeSteer is independent and not affiliated with or endorsed by Cloudflare.
+MIT，见 [LICENSE](LICENSE)。EdgeSteer 与 Cloudflare 无隶属或背书关系。
