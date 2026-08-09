@@ -7,6 +7,7 @@ use tracing::info;
 pub mod config;
 pub mod dns;
 pub mod optimizer;
+pub mod plugins;
 pub mod ranges;
 pub mod state;
 pub mod watcher;
@@ -17,8 +18,8 @@ pub mod watcher;
     about = "Adaptive DNS steering for preferred Cloudflare edge IPs"
 )]
 pub struct Args {
-    /// TOML configuration file.
-    #[arg(short, long, default_value = "edgesteer.toml")]
+    /// JSON configuration file.
+    #[arg(short, long, default_value = "edgesteer.json")]
     pub config: PathBuf,
 
     /// Validate the configuration and exit.

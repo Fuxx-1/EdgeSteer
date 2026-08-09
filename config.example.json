@@ -1,0 +1,72 @@
+{
+  "listener": {
+    "address": "127.0.0.1:53",
+    "allow_remote": false
+  },
+  "cloudflare": {
+    "range_refresh_secs": 86400
+  },
+  "request_timeout_ms": 8000,
+  "entry": "preferred",
+  "plugins": [
+    {
+      "tag": "cloudflare-preferred",
+      "type": "cloudflare_preferred",
+      "rewrite_ttl_secs": 60,
+      "preferred": {},
+      "optimizer": {
+        "enabled": true,
+        "interval_secs": 21600,
+        "test_host": "www.cloudflare.com",
+        "test_path": "/cdn-cgi/trace",
+        "test_port": 443,
+        "timeout_ms": 3000,
+        "concurrency": 16,
+        "samples_per_cidr": 16,
+        "max_candidates": 64,
+        "candidates": [
+          "104.16.0.0/13",
+          "172.64.0.0/13"
+        ]
+      }
+    }
+  ],
+  "layers": [
+    {
+      "tag": "preferred",
+      "type": "interceptor",
+      "plugin": "cloudflare-preferred",
+      "fallback": "cloudflare-doh"
+    },
+    {
+      "tag": "cloudflare-doh",
+      "type": "doh",
+      "address": "1.1.1.1:443",
+      "url": "https://cloudflare-dns.com/dns-query",
+      "timeout_ms": 2800,
+      "fallback": "tencent-doh"
+    },
+    {
+      "tag": "tencent-doh",
+      "type": "doh",
+      "address": "120.53.53.53:443",
+      "url": "https://doh.pub/dns-query",
+      "timeout_ms": 2800,
+      "fallback": "local",
+      "match": {
+        "mode": "label",
+        "keywords": ["cn"]
+      }
+    },
+    {
+      "tag": "local",
+      "type": "udp",
+      "address": "223.5.5.5:53",
+      "timeout_ms": 1800,
+      "match": {
+        "mode": "label",
+        "keywords": ["local", "lan", "home"]
+      }
+    }
+  ]
+}
