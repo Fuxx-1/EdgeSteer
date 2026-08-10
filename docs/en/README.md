@@ -77,7 +77,8 @@ See the [configuration guide](configuration.md) for all fields, DoH/DoT constrai
 ## Important boundaries
 
 - The configuration is strict JSON. Unknown fields are rejected; `entry`, layer, fallback, and plugin references must exist, and fallback chains cannot contain cycles.
-- `local` must be an explicit numeric resolver such as a router or SmartDNS instance. It never means the operating-system resolver, which could loop back after system DNS points to EdgeSteer.
+- `local` dynamically reads real DNS upstreams from the system network configuration; it never calls the operating-system resolver. It filters loopback, listener, and virtual-tunnel DNS, so it does not self-loop, but it cannot recover a DHCP/VPN upstream that another component has already replaced with EdgeSteer.
+- Native UDP/TCP queries do not bypass sing-box TUN or transparent DNS interception. Routing direct access to the underlay DNS belongs in the outer proxy configuration.
 - Only network, TLS, HTTP, empty-body, malformed-DNS, or response-correlation failures enter fallback. Valid NXDOMAIN, NODATA, SERVFAIL, and REFUSED responses are returned immediately.
 - Plugins are statically compiled built-ins. JSON cannot load a dynamic library, script, or external command.
 - The default listener binds only to loopback. Enabling `allow_remote: true` makes it a LAN DNS service and requires your own access control and abuse protection.

@@ -247,6 +247,9 @@ pub struct LayerConfig {
     pub address: Option<SocketAddr>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// Refresh interval for a dynamically discovered local resolver layer.
+    #[serde(default)]
+    pub refresh_secs: Option<u64>,
     /// Required for a DoH layer. Its hostname provides TLS SNI and Host.
     #[serde(default)]
     pub url: Option<String>,
@@ -267,14 +270,22 @@ impl LayerConfig {
         self.timeout_ms.unwrap_or_else(default_layer_timeout_ms)
     }
 
+    pub fn refresh_secs(&self) -> u64 {
+        self.refresh_secs.unwrap_or_else(default_local_refresh_secs)
+    }
+
     fn validate(&self, listener: SocketAddr, plugin_tags: &HashSet<&str>) -> Result<()> {
         self.matcher.validate(&self.tag)?;
         match self.kind {
             LayerType::Udp | LayerType::Tcp => {
                 self.validate_network(listener)?;
-                if self.url.is_some() || self.server_name.is_some() || self.plugin.is_some() {
+                if self.refresh_secs.is_some()
+                    || self.url.is_some()
+                    || self.server_name.is_some()
+                    || self.plugin.is_some()
+                {
                     bail!(
-                        "layer {:?} is {:?}; url, server_name, and plugin are not valid",
+                        "layer {:?} is {:?}; refresh_secs, url, server_name, and plugin are not valid",
                         self.tag,
                         self.kind
                     );
@@ -282,8 +293,11 @@ impl LayerConfig {
             }
             LayerType::Dot => {
                 self.validate_network(listener)?;
-                if self.url.is_some() || self.plugin.is_some() {
-                    bail!("DoT layer {:?} must not set url or plugin", self.tag);
+                if self.refresh_secs.is_some() || self.url.is_some() || self.plugin.is_some() {
+                    bail!(
+                        "DoT layer {:?} must not set refresh_secs, url, or plugin",
+                        self.tag
+                    );
                 }
                 let server_name = self
                     .server_name
@@ -294,9 +308,12 @@ impl LayerConfig {
             }
             LayerType::Doh => {
                 self.validate_network(listener)?;
-                if self.server_name.is_some() || self.plugin.is_some() {
+                if self.refresh_secs.is_some()
+                    || self.server_name.is_some()
+                    || self.plugin.is_some()
+                {
                     bail!(
-                        "DoH layer {:?} derives SNI from url and must not set server_name or plugin",
+                        "DoH layer {:?} derives SNI from url and must not set refresh_secs, server_name, or plugin",
                         self.tag
                     );
                 }
@@ -327,11 +344,33 @@ impl LayerConfig {
                 }
                 if self.address.is_some()
                     || self.timeout_ms.is_some()
+                    || self.refresh_secs.is_some()
                     || self.url.is_some()
                     || self.server_name.is_some()
                 {
                     bail!(
                         "interceptor layer {:?} only accepts plugin, fallback, and match",
+                        self.tag
+                    );
+                }
+            }
+            LayerType::Local => {
+                if self.address.is_some()
+                    || self.url.is_some()
+                    || self.server_name.is_some()
+                    || self.plugin.is_some()
+                {
+                    bail!(
+                        "local layer {:?} only accepts timeout_ms, refresh_secs, fallback, and match",
+                        self.tag
+                    );
+                }
+                if self.timeout_ms() == 0 {
+                    bail!("local layer {:?} has a zero timeout", self.tag);
+                }
+                if self.refresh_secs() == 0 {
+                    bail!(
+                        "local layer {:?} refresh_secs must be greater than zero",
                         self.tag
                     );
                 }
@@ -395,6 +434,10 @@ const fn default_layer_timeout_ms() -> u64 {
     3_000
 }
 
+const fn default_local_refresh_secs() -> u64 {
+    30
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LayerType {
@@ -402,6 +445,7 @@ pub enum LayerType {
     Tcp,
     Doh,
     Dot,
+    Local,
     Interceptor,
 }
 
@@ -553,8 +597,8 @@ mod tests {
             },
             {
               "tag": "local",
-              "type": "udp",
-              "address": "127.0.0.1:53",
+              "type": "local",
+              "refresh_secs": 30,
               "match": { "keywords": ["local", "lan"] }
             }
           ]
@@ -592,6 +636,20 @@ mod tests {
     fn rejects_an_empty_keyword() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
         config.layers[3].matcher.keywords.push(" ".to_owned());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_a_fixed_address_for_a_local_layer() {
+        let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        config.layers[3].address = Some("10.0.0.53:53".parse().unwrap());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_a_zero_local_refresh_interval() {
+        let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        config.layers[3].refresh_secs = Some(0);
         assert!(config.validate().is_err());
     }
 

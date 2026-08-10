@@ -27,6 +27,21 @@ pub struct PreferredIps {
     pub ipv6: Option<Ipv6Addr>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalResolvers {
+    addresses: Vec<SocketAddr>,
+}
+
+impl LocalResolvers {
+    pub fn new(addresses: Vec<SocketAddr>) -> Self {
+        Self { addresses }
+    }
+
+    pub fn addresses(&self) -> &[SocketAddr] {
+        &self.addresses
+    }
+}
+
 impl PreferredIps {
     pub fn from_config(config: &PreferredConfig) -> Self {
         Self {
@@ -105,10 +120,12 @@ fn static_preferred_ips(config: &FileConfig) -> HashMap<String, PreferredIps> {
 pub struct AppState {
     pub runtime: ArcSwap<RuntimeConfig>,
     pub cloudflare_ranges: ArcSwap<Vec<IpNet>>,
+    local_resolvers: ArcSwap<LocalResolvers>,
     pub config_changed: Notify,
     pub query_permits: Arc<Semaphore>,
     runtime_update_lock: Mutex<()>,
     doh_clients: Mutex<HashMap<DohClientKey, Client>>,
+    pub(crate) local_dns_refresh_lock: tokio::sync::Mutex<()>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -118,10 +135,12 @@ impl AppState {
         Arc::new(Self {
             runtime: ArcSwap::from_pointee(RuntimeConfig::new(config)),
             cloudflare_ranges: ArcSwap::from_pointee(cloudflare_ranges),
+            local_resolvers: ArcSwap::from_pointee(LocalResolvers::default()),
             config_changed: Notify::new(),
             query_permits: Arc::new(Semaphore::new(MAX_IN_FLIGHT_QUERIES)),
             runtime_update_lock: Mutex::new(()),
             doh_clients: Mutex::new(HashMap::new()),
+            local_dns_refresh_lock: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -201,6 +220,16 @@ impl AppState {
 
     pub fn clear_doh_clients(&self) {
         lock_or_recover(&self.doh_clients).clear();
+    }
+
+    pub fn local_resolvers(&self) -> Arc<LocalResolvers> {
+        self.local_resolvers.load_full()
+    }
+
+    pub fn replace_local_resolvers(&self, addresses: Vec<SocketAddr>) -> Arc<LocalResolvers> {
+        let resolvers = Arc::new(LocalResolvers::new(addresses));
+        self.local_resolvers.store(resolvers.clone());
+        resolvers
     }
 }
 

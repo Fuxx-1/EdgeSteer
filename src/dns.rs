@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashSet, VecDeque},
     io,
     net::SocketAddr,
     sync::{Arc, OnceLock},
@@ -22,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     config::{LayerConfig, LayerType},
-    plugins,
+    local_dns, plugins,
     state::{RuntimeConfig, SharedState},
 };
 
@@ -175,7 +176,11 @@ async fn query_layers(
             LayerType::Interceptor => {
                 interceptors.push(layer);
             }
-            LayerType::Udp | LayerType::Tcp | LayerType::Doh | LayerType::Dot => {
+            LayerType::Udp
+            | LayerType::Tcp
+            | LayerType::Doh
+            | LayerType::Dot
+            | LayerType::Local => {
                 let result = query_network_layer(packet, request, &layer, state, deadline).await;
                 match result {
                     Ok(mut response) => {
@@ -218,34 +223,166 @@ async fn query_network_layer(
     state: &SharedState,
     deadline: Instant,
 ) -> Result<Message> {
-    let duration = layer_duration(layer, deadline)?;
-    let bytes = match layer.kind {
-        LayerType::Udp => udp_exchange(packet, layer, duration).await,
-        LayerType::Tcp => tcp_exchange(packet, layer, duration).await,
-        LayerType::Doh => doh_exchange(packet, layer, state, duration).await,
-        LayerType::Dot => dot_exchange(packet, layer, duration).await,
+    match layer.kind {
+        LayerType::Udp => {
+            query_udp_layer(
+                packet,
+                request,
+                layer.address(),
+                layer_deadline(layer, deadline)?,
+            )
+            .await
+        }
+        LayerType::Tcp => {
+            let bytes = tcp_exchange(
+                packet,
+                layer.address(),
+                duration_until(layer_deadline(layer, deadline)?)?,
+            )
+            .await?;
+            validate_upstream_response(request, &bytes)
+        }
+        LayerType::Doh => {
+            let bytes = doh_exchange(
+                packet,
+                layer,
+                state,
+                duration_until(layer_deadline(layer, deadline)?)?,
+            )
+            .await?;
+            validate_upstream_response(request, &bytes)
+        }
+        LayerType::Dot => {
+            let bytes = dot_exchange(
+                packet,
+                layer,
+                duration_until(layer_deadline(layer, deadline)?)?,
+            )
+            .await?;
+            validate_upstream_response(request, &bytes)
+        }
+        LayerType::Local => local_exchange(packet, request, layer, state, deadline).await,
         LayerType::Interceptor => bail!("interceptor is not a network layer"),
-    }?;
-    let response = validate_upstream_response(request, &bytes)?;
+    }
+}
 
-    if layer.kind != LayerType::Udp || !response.truncated() {
+async fn query_udp_layer(
+    packet: &[u8],
+    request: &Message,
+    address: SocketAddr,
+    deadline: Instant,
+) -> Result<Message> {
+    let bytes = udp_exchange(packet, address, duration_until(deadline)?).await?;
+    let response = validate_upstream_response(request, &bytes)?;
+    if !response.truncated() {
         return Ok(response);
     }
 
-    let duration = layer_duration(layer, deadline)?;
-    let bytes = tcp_exchange(packet, layer, duration)
+    let bytes = tcp_exchange(packet, address, duration_until(deadline)?)
         .await
         .context("retry truncated UDP response over TCP")?;
     validate_upstream_response(request, &bytes)
         .context("truncated UDP response's TCP retry was invalid")
 }
 
-fn layer_duration(layer: &LayerConfig, deadline: Instant) -> Result<Duration> {
+async fn local_exchange(
+    packet: &[u8],
+    request: &Message,
+    layer: &LayerConfig,
+    state: &SharedState,
+    deadline: Instant,
+) -> Result<Message> {
+    let deadline = layer_deadline(layer, deadline)?;
+    let observed = state.local_resolvers();
+    let mut candidates: VecDeque<SocketAddr> = observed.addresses().iter().copied().collect();
+    let mut known: HashSet<SocketAddr> = candidates.iter().copied().collect();
+    let mut refreshed = false;
+    let mut last_error = None;
+
+    if candidates.is_empty() {
+        let discovered = refresh_local_after_failure(state, &observed, deadline)
+            .await
+            .context("local resolver cache is empty")?;
+        extend_local_candidates(&mut candidates, &mut known, discovered.addresses());
+        refreshed = true;
+    }
+
+    while let Some(address) = candidates.pop_front() {
+        let endpoint_deadline = allocated_endpoint_deadline(deadline, candidates.len() + 1);
+        match query_udp_layer(packet, request, address, endpoint_deadline).await {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                last_error = Some(anyhow!("local DNS server {address} failed: {error}"));
+                if !refreshed {
+                    refreshed = true;
+                    match refresh_local_after_failure(state, &observed, deadline).await {
+                        Ok(discovered) => {
+                            extend_local_candidates(
+                                &mut candidates,
+                                &mut known,
+                                discovered.addresses(),
+                            );
+                        }
+                        Err(refresh_error) => {
+                            debug!(%refresh_error, "could not rediscover system DNS after local resolver failure");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| anyhow!("system DNS discovery returned no usable local resolver")))
+}
+
+async fn refresh_local_after_failure(
+    state: &SharedState,
+    observed: &Arc<crate::state::LocalResolvers>,
+    deadline: Instant,
+) -> Result<Arc<crate::state::LocalResolvers>> {
+    timeout(
+        duration_until(deadline)?,
+        local_dns::refresh_after_failure(state, observed),
+    )
+    .await
+    .context("system DNS rediscovery timed out")?
+}
+
+fn extend_local_candidates(
+    candidates: &mut VecDeque<SocketAddr>,
+    known: &mut HashSet<SocketAddr>,
+    discovered: &[SocketAddr],
+) {
+    for address in discovered {
+        if known.insert(*address) {
+            candidates.push_back(*address);
+        }
+    }
+}
+
+fn layer_deadline(layer: &LayerConfig, deadline: Instant) -> Result<Instant> {
+    let now = Instant::now();
+    let remaining = deadline.saturating_duration_since(now);
+    if remaining.is_zero() {
+        bail!("DNS request deadline expired");
+    }
+    Ok((now + Duration::from_millis(layer.timeout_ms())).min(deadline))
+}
+
+fn allocated_endpoint_deadline(deadline: Instant, targets_remaining: usize) -> Instant {
+    let now = Instant::now();
+    let remaining = deadline.saturating_duration_since(now);
+    let divisor = u32::try_from(targets_remaining).unwrap_or(u32::MAX).max(1);
+    now + remaining / divisor
+}
+
+fn duration_until(deadline: Instant) -> Result<Duration> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
         bail!("DNS request deadline expired");
     }
-    Ok(remaining.min(Duration::from_millis(layer.timeout_ms())))
+    Ok(remaining)
 }
 
 fn validate_upstream_response(request: &Message, packet: &[u8]) -> Result<Message> {
@@ -269,14 +406,14 @@ fn validate_upstream_response(request: &Message, packet: &[u8]) -> Result<Messag
     Ok(response)
 }
 
-async fn udp_exchange(packet: &[u8], layer: &LayerConfig, duration: Duration) -> Result<Vec<u8>> {
-    let bind_address = match layer.address() {
+async fn udp_exchange(packet: &[u8], address: SocketAddr, duration: Duration) -> Result<Vec<u8>> {
+    let bind_address = match address {
         SocketAddr::V4(_) => "0.0.0.0:0",
         SocketAddr::V6(_) => "[::]:0",
     };
     let response = timeout(duration, async {
         let socket = UdpSocket::bind(bind_address).await?;
-        socket.connect(layer.address()).await?;
+        socket.connect(address).await?;
         socket.send(packet).await?;
         let mut response = vec![0_u8; u16::MAX as usize];
         let length = socket.recv(&mut response).await?;
@@ -287,10 +424,10 @@ async fn udp_exchange(packet: &[u8], layer: &LayerConfig, duration: Duration) ->
     Ok(response)
 }
 
-async fn tcp_exchange(packet: &[u8], layer: &LayerConfig, duration: Duration) -> Result<Vec<u8>> {
+async fn tcp_exchange(packet: &[u8], address: SocketAddr, duration: Duration) -> Result<Vec<u8>> {
     let packet_length = u16::try_from(packet.len()).context("DNS query exceeds TCP frame limit")?;
     let response = timeout(duration, async {
-        let mut stream = TcpStream::connect(layer.address()).await?;
+        let mut stream = TcpStream::connect(address).await?;
         stream.write_u16(packet_length).await?;
         stream.write_all(packet).await?;
         stream.flush().await?;
@@ -430,6 +567,22 @@ mod tests {
             matcher: KeywordMatch::default(),
             address: Some(address),
             timeout_ms: Some(500),
+            refresh_secs: None,
+            url: None,
+            server_name: None,
+            plugin: None,
+        }
+    }
+
+    fn local_layer(tag: &str, fallback: Option<&str>) -> LayerConfig {
+        LayerConfig {
+            tag: tag.to_owned(),
+            kind: LayerType::Local,
+            fallback: fallback.map(str::to_owned),
+            matcher: KeywordMatch::default(),
+            address: None,
+            timeout_ms: Some(500),
+            refresh_secs: Some(30),
             url: None,
             server_name: None,
             plugin: None,
@@ -518,6 +671,46 @@ mod tests {
         assert_eq!(response.id(), request.id());
         first_task.await.unwrap();
         second_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn queries_the_cached_dynamic_local_resolver() {
+        let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let upstream_address = upstream.local_addr().unwrap();
+        let upstream_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = upstream.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            upstream
+                .send_to(&response_for(&request).to_bytes().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+
+        let config = FileConfig {
+            request_timeout_ms: 1_500,
+            entry: "local".to_owned(),
+            layers: vec![local_layer("local", None)],
+            ..FileConfig::default()
+        };
+        let state = AppState::new(config, Vec::new());
+        state.replace_local_resolvers(vec![upstream_address]);
+        let request = request();
+        let packet = request.to_bytes().unwrap();
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.id(), request.id());
+        upstream_task.await.unwrap();
     }
 
     #[tokio::test]

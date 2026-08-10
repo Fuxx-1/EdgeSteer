@@ -137,6 +137,7 @@ mod tests {
                 matcher: Default::default(),
                 address: Some(upstream.parse().unwrap()),
                 timeout_ms: Some(1_000),
+                refresh_secs: None,
                 url: None,
                 server_name: None,
                 plugin: None,

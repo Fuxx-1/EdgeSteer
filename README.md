@@ -79,7 +79,8 @@ dig @127.0.0.1 -p 53535 www.cloudflare.com A +short
 ## 重要边界
 
 - 配置文件是严格 JSON，未知字段会被拒绝；`entry`、layer、fallback 和 plugin 引用必须存在，fallback 不能成环。
-- `local` 必须填写明确的数值 resolver 地址，例如路由器或 SmartDNS，不能隐式调用系统 resolver，否则系统 DNS 指向 EdgeSteer 后会形成回环。
+- `local` 动态读取系统网络配置中的真实 DNS 上游，不调用系统 resolver。它会过滤 loopback、listener 和虚拟隧道 DNS；若系统配置已被外部组件改成 EdgeSteer，自身不会回环，但也无法恢复原始 DHCP/VPN 上游。
+- 原生 UDP/TCP 查询不会绕过 sing-box TUN 或透明 DNS 接管；对下层 DNS 的直连路由由外层代理配置负责。
 - 只有网络、TLS、HTTP、空响应、畸形 DNS 或响应关联校验失败才进入 fallback。有效的 NXDOMAIN、NODATA、SERVFAIL 和 REFUSED 会直接返回。
 - plugin 只允许静态编译进程序的 builtin 实现，JSON 不会加载动态库、脚本或外部命令。
 - 默认只监听回环地址。`allow_remote: true` 会把它变成局域网 DNS 服务，应由使用者自行承担访问控制和滥用风险。

@@ -60,9 +60,9 @@
     },
     {
       "tag": "local",
-      "type": "udp",
-      "address": "223.5.5.5:53",
+      "type": "local",
       "timeout_ms": 1800,
+      "refresh_secs": 30,
       "match": {
         "mode": "label",
         "keywords": ["local", "lan", "home"]

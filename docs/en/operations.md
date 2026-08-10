@@ -53,17 +53,20 @@ Resolve-DnsName www.cloudflare.com -Server 127.0.0.1 -Type A
 
 ## Use as system DNS
 
-Only switch to port 53 after the high-port queries work. The default listener binds loopback and is not intended to be an open recursive DNS service.
+Only consider switching to port 53 after high-port queries work. The default listener binds loopback and is not intended to be an open recursive DNS service.
+
+Do not change operating-system DNS to EdgeSteer when the configuration contains `type: "local"`: that layer discovers real underlay DNS from the current system network configuration, and replacing it leaves only filtered loopback/listener addresses. This mode fits a setup where sing-box or another DNS front end points to EdgeSteer while the network adapter retains DHCP/VPN DNS. If EdgeSteer must be the system DNS directly, use explicit fixed UDP/TCP upstreams instead of dynamic `local`.
 
 macOS:
 
 ```sh
+# Only when type: "local" is not used
 sudo networksetup -setdnsservers "Wi-Fi" 127.0.0.1
 # Restore DHCP DNS
 sudo networksetup -setdnsservers "Wi-Fi" Empty
 ```
 
-On Linux and Windows, set `127.0.0.1` as the active adapter or network manager's DNS server. During a 53535 test, the production listener must still use its configured port; ordinary DNS address fields do not include a port.
+On Linux and Windows, set `127.0.0.1` as the active adapter or network manager's DNS server only when dynamic `local` is not used. During a 53535 test, the production listener must still use its configured port; ordinary DNS address fields do not include a port.
 
 Browser and application Secure DNS/DoH can bypass the system resolver. Disable per-application Secure DNS, or configure the application to use the local entry point, when EdgeSteer should process those queries.
 
@@ -92,7 +95,8 @@ RUST_LOG=debug ./target/release/edgesteer --config edgesteer.json
 
 ## Runtime safety
 
-- `local` must point to an explicit router, SmartDNS, or other resolver and must not be the current listener.
+- `local` dynamically reads underlay DNS from system network configuration; verify that startup logs show discovered addresses. If system DNS has already been changed to EdgeSteer or only `127.0.0.1`/`::1` remains, it refuses the loop and local queries fail.
+- EdgeSteer's native UDP/TCP sockets do not bypass sing-box TUN or transparent DNS interception. Proxy rules must route discovered underlay DNS `:53` traffic through the intended egress.
 - Do not expose `allow_remote: true` directly to the public Internet; LAN deployments still need firewalling and rate limits.
 - Preferred IP rewriting only applies after Cloudflare-range verification. It does not guarantee the origin, certificate, or application behavior of a third-party site.
 - The optimizer makes HTTPS probes to Cloudflare. Include that traffic in egress, proxy, and privacy reviews.

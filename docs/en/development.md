@@ -10,6 +10,7 @@ EdgeSteer is a Rust 2024 project with Rust 1.85 as its MSRV. Source, configurati
 | --- | --- |
 | `src/config.rs` | JSON schema, deserialization, and validation. |
 | `src/dns.rs` | UDP/TCP listener, DoH/DoT/UDP/TCP upstreams, and response validation. |
+| `src/local_dns.rs` | System network DNS discovery and refresh for macOS, Linux, and Windows. |
 | `src/plugins.rs` | Built-in response interceptors. |
 | `src/optimizer.rs` | Cloudflare preferred-address probes. |
 | `src/ranges.rs` | Cloudflare range loading and refresh. |
@@ -36,7 +37,7 @@ Validate only the configuration:
 cargo run --release -- --config config.example.json --check-config
 ```
 
-Tests do not depend on CI access to Cloudflare or Tencent. Network integration tests use a local fake UDP endpoint; key constraints for other transports are covered by configuration validation and pure unit tests, including response correlation, fallback order, keywords, interceptor rewriting, and reloads.
+Tests do not depend on CI access to Cloudflare or Tencent. Network integration tests use a local fake UDP endpoint; key constraints for other transports are covered by configuration validation and pure unit tests, including response correlation, fallback order, keywords, dynamic local caching, interceptor rewriting, and reloads.
 
 ## Change rules
 
