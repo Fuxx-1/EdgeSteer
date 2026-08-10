@@ -55,15 +55,17 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
     },
     {
       "tag": "local",
-      "type": "udp",
-      "address": "192.168.1.1:53",
-      "timeout_ms": 1800
+      "type": "local",
+      "timeout_ms": 1800,
+      "refresh_secs": 30
     }
   ]
 }
 ```
 
-`local` 不是“系统 DNS”或代理层。请写入路由器、企业 DNS、SmartDNS 或其他明确 resolver 的数值地址，并避免与 listener 相同或重叠；不要指向会被 sing-box、TUN 或 DNS hijack 再次接管的本地端口，否则会形成回环。
+`local` 从操作系统的网络 DNS 配置读取真实上游，不调用系统 resolver，也不接受 `address`。macOS 枚举 SystemConfiguration 中非隧道网络服务（跳过 `utun`/`ppp`/`tun` 等虚拟接口）；Linux 读取 systemd-resolved 的真实 `resolv.conf`（存在时）或 `/etc/resolv.conf`，Windows 读取已启用网卡的 DNS 配置。EdgeSteer 对发现到的数值地址直接发送 DNS wire query；它会过滤回环、未指定、组播、IPv6 link-local、重复地址和自身 listener。
+
+系统配置中必须仍能看到真实的下层 DNS。若系统 DNS 已被改成 `127.0.0.1`、`::1` 或 EdgeSteer 自身地址，`local` 会明确失败而不是回环，也不能凭空恢复之前的 DHCP/VPN 上游。原生 UDP/TCP socket 不会绕过 sing-box TUN 或透明 DNS 接管；这些路由规则需要在外层代理中处理。
 
 ## 顶层字段
 
@@ -85,9 +87,10 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
 | `tcp` | `address` | DNS over TCP。 |
 | `doh` | `address`, `url` | HTTPS DNS。`address` 是固定数值 bootstrap；`url` 主机名用于 SNI、Host 和证书校验。 |
 | `dot` | `address`, `server_name` | DNS over TLS，必须校验证书名称。 |
+| `local` | 无 | 动态读取系统网络 DNS，按顺序使用发现到的 UDP/TCP 上游。可设置 `timeout_ms` 和 `refresh_secs`。 |
 | `interceptor` | `plugin`, `fallback` | 不发送网络请求，在后继 layer 成功后执行 builtin plugin。 |
 
-所有网络 layer 都可以设置 `fallback` 和 `timeout_ms`。fallback 引用必须存在，整张图不能有环。网络地址不能使用端口 0，也不能与 listener 地址重叠，包括未指定地址造成的潜在重叠。
+所有网络 layer 都可以设置 `fallback` 和 `timeout_ms`。`local` 额外可设置 `refresh_secs`，默认 30 秒。fallback 引用必须存在，整张图不能有环。固定网络地址不能使用端口 0，也不能与 listener 地址重叠，包括未指定地址造成的潜在重叠。
 
 ### DoH 约束
 
@@ -96,6 +99,21 @@ DoH `url` 必须是 HTTPS，不能包含用户名、密码或 fragment；URL 的
 ### DoT 约束
 
 DoT 使用 `address` 建立 TCP 连接，使用 `server_name` 完成 TLS SNI 和证书校验。自签证书、错误名称和握手失败都会进入该 layer 的 fallback。
+
+### 动态 local
+
+```json
+{
+  "tag": "local",
+  "type": "local",
+  "timeout_ms": 1800,
+  "refresh_secs": 30
+}
+```
+
+启动时立即发现系统 DNS，随后按 `refresh_secs` 刷新；同一进程中存在多个 `local` layer 时，使用最短刷新周期。单次 local 查询会依次尝试缓存中的每个地址，UDP 响应带 `TC=1` 时用同一地址 TCP 重试。一个地址出现网络或协议错误后，EdgeSteer 会在本次请求的剩余 deadline 内立即重新发现系统 DNS，并把新地址追加到候选列表。有效 DNS 响应（包括 `SERVFAIL`）不会触发重试或 fallback。
+
+`local` 只能接受 `timeout_ms`、`refresh_secs`、`fallback` 和 `match`；`address`、`url`、`server_name`、`plugin` 会被拒绝。这里的“动态”是读取当前系统配置，不是调用 libc resolver，因此不会自行进入 EdgeSteer listener；但如果外部把系统 DNS 改成 listener，程序也无法知道原始上游。
 
 ## 关键词匹配
 

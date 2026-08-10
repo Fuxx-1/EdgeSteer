@@ -55,15 +55,17 @@ This example represents “preferred interceptor -> Cloudflare DoH -> Tencent Do
     },
     {
       "tag": "local",
-      "type": "udp",
-      "address": "192.168.1.1:53",
-      "timeout_ms": 1800
+      "type": "local",
+      "timeout_ms": 1800,
+      "refresh_secs": 30
     }
   ]
 }
 ```
 
-`local` is not the system resolver or a proxy layer. Put an explicit numeric address for a router, corporate DNS, SmartDNS instance, or another resolver and do not overlap the listener. Do not point it at a local port captured again by sing-box, TUN, or DNS hijacking, or the request will loop.
+`local` reads real upstreams from the operating system's network DNS configuration. It does not call the system resolver and does not accept `address`. On macOS it enumerates non-tunnel SystemConfiguration services, skipping virtual `utun`/`ppp`/`tun` interfaces; Linux uses systemd-resolved's real `resolv.conf` when present, otherwise `/etc/resolv.conf`; Windows reads DNS settings from enabled adapters. EdgeSteer sends DNS wire queries directly to the discovered numeric addresses and filters loopback, unspecified, multicast, IPv6 link-local, duplicate, and listener addresses.
+
+The system configuration must still expose a real underlay DNS server. If it has already been changed to `127.0.0.1`, `::1`, or the EdgeSteer listener, `local` fails explicitly instead of looping and cannot reconstruct a prior DHCP or VPN upstream. A native UDP/TCP socket does not bypass sing-box TUN or transparent DNS interception; configure those routes in the outer proxy.
 
 ## Top-level fields
 
@@ -85,9 +87,10 @@ This example represents “preferred interceptor -> Cloudflare DoH -> Tencent Do
 | `tcp` | `address` | DNS over TCP. |
 | `doh` | `address`, `url` | DNS over HTTPS. `address` is the fixed numeric bootstrap; the `url` hostname supplies SNI, Host, and certificate validation. |
 | `dot` | `address`, `server_name` | DNS over TLS with mandatory certificate-name verification. |
+| `local` | None | Dynamically reads system network DNS and tries its discovered UDP/TCP upstreams in order. `timeout_ms` and `refresh_secs` are optional. |
 | `interceptor` | `plugin`, `fallback` | Sends no network request; runs the built-in plugin after a downstream layer succeeds. |
 
-Every network layer may set `fallback` and `timeout_ms`. Fallback references must exist and the graph cannot contain cycles. Network addresses cannot use port 0 or overlap the listener, including wildcard-address overlap.
+Every network layer may set `fallback` and `timeout_ms`. `local` can also set `refresh_secs`, which defaults to 30 seconds. Fallback references must exist and the graph cannot contain cycles. Fixed network addresses cannot use port 0 or overlap the listener, including wildcard-address overlap.
 
 ### DoH constraints
 
@@ -96,6 +99,21 @@ The DoH `url` must use HTTPS and cannot contain credentials or a fragment. Its p
 ### DoT constraints
 
 DoT connects to `address` and uses `server_name` for TLS SNI and certificate verification. Self-signed certificates, wrong names, and handshake failures enter the layer's fallback.
+
+### Dynamic local
+
+```json
+{
+  "tag": "local",
+  "type": "local",
+  "timeout_ms": 1800,
+  "refresh_secs": 30
+}
+```
+
+Discovery runs at startup and then every `refresh_secs`; when a process has more than one `local` layer, the shortest interval wins. A local query tries cached addresses in order and retries a `TC=1` UDP response over TCP to the same address. After an address has a network or protocol failure, EdgeSteer immediately rediscovers system DNS within the remaining request deadline and appends newly found addresses to that request's candidates. A valid DNS response, including `SERVFAIL`, does not retry or fall back.
+
+`local` only accepts `timeout_ms`, `refresh_secs`, `fallback`, and `match`; `address`, `url`, `server_name`, and `plugin` are rejected. Dynamic means reading current system configuration rather than calling the libc resolver, so it does not itself enter the EdgeSteer listener. It cannot recover an original upstream after an external component replaces the system DNS with the listener.
 
 ## Keyword matching
 

@@ -6,6 +6,7 @@ use tracing::info;
 
 pub mod config;
 pub mod dns;
+pub mod local_dns;
 pub mod optimizer;
 pub mod plugins;
 pub mod ranges;
@@ -43,6 +44,7 @@ pub async fn run(args: Args) -> Result<()> {
     info!(%listener, config = %args.config.display(), "starting EdgeSteer");
 
     let dns_task = tokio::spawn(dns::serve(state.clone()));
+    let _local_dns_task = tokio::spawn(local_dns::refresh_loop(state.clone()));
     let _range_task = tokio::spawn(ranges::refresh_loop(state.clone()));
     let _optimizer_task = tokio::spawn(optimizer::run_loop(state));
 

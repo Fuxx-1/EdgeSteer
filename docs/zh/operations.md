@@ -53,17 +53,20 @@ Resolve-DnsName www.cloudflare.com -Server 127.0.0.1 -Type A
 
 ## 接入系统 DNS
 
-只有高端口查询成功后才切换到 53 端口。默认 listener 只绑定回环地址，不适合作为开放递归 DNS 服务。
+只有高端口查询成功后才考虑切换到 53 端口。默认 listener 只绑定回环地址，不适合作为开放递归 DNS 服务。
+
+配置含有 `type: "local"` 时，不要把操作系统 DNS 改成 EdgeSteer 自己：`local` 依赖当前系统网络配置来发现真实下层 DNS，替换后只会得到被过滤的 loopback/listener 地址。此模式适合让 sing-box 等 DNS 前端指向 EdgeSteer，同时保留系统网卡的 DHCP/VPN DNS；若必须把 EdgeSteer 直接设为系统 DNS，应使用明确固定的 UDP/TCP 上游而不是动态 `local`。
 
 macOS：
 
 ```sh
+# 仅在未使用 type: "local" 时设置 EdgeSteer 为系统 DNS
 sudo networksetup -setdnsservers "Wi-Fi" 127.0.0.1
 # 恢复 DHCP DNS
 sudo networksetup -setdnsservers "Wi-Fi" Empty
 ```
 
-Linux 和 Windows：在当前网络管理器或网卡 IPv4 DNS 设置中填入 `127.0.0.1`。如果 EdgeSteer 使用 53535 做测试，系统 DNS 仍应指向正式监听端口；客户端不能把端口写进普通 DNS 地址字段。
+Linux 和 Windows：仅在未使用动态 `local` 时，才在当前网络管理器或网卡 IPv4 DNS 设置中填入 `127.0.0.1`。如果 EdgeSteer 使用 53535 做测试，系统 DNS 仍应指向正式监听端口；客户端不能把端口写进普通 DNS 地址字段。
 
 浏览器或应用的 Secure DNS/DoH 可能绕过系统 resolver。需要 EdgeSteer 处理这些查询时，应关闭该应用的独立 Secure DNS，或在应用中明确配置对应的本地入口。
 
@@ -92,7 +95,8 @@ RUST_LOG=debug ./target/release/edgesteer --config edgesteer.json
 
 ## 运行安全
 
-- `local` 使用明确的路由器、SmartDNS 或其他 resolver 地址，不能填写当前 listener。
+- `local` 从系统网络配置动态读取下层 DNS；启动后先检查日志是否发现了地址。系统 DNS 若已被改成 EdgeSteer 或仅剩 `127.0.0.1`/`::1`，会拒绝回环并导致 local 失败。
+- EdgeSteer 的原生 UDP/TCP socket 不绕过 sing-box TUN 或透明 DNS 接管。将发现到的下层 DNS 的 `:53` 流量放行到正确出口由代理规则负责。
 - 不要把 `allow_remote: true` 直接暴露到公网；局域网部署也应配合防火墙和速率限制。
 - 优选 IP 只改变经过 Cloudflare 网段确认的响应，不保证第三方站点的源站、证书或应用层可用性。
 - optimizer 会发起到 Cloudflare 的 HTTPS 探测，配置代理、出口网络或隐私策略时应将其纳入评估。
