@@ -63,7 +63,7 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
 }
 ```
 
-`local` 不是“系统 DNS”。请写入路由器、SmartDNS 或其他明确 resolver 的数值地址，并避免与 listener 相同或重叠。
+`local` 不是“系统 DNS”或代理层。请写入路由器、企业 DNS、SmartDNS 或其他明确 resolver 的数值地址，并避免与 listener 相同或重叠；不要指向会被 sing-box、TUN 或 DNS hijack 再次接管的本地端口，否则会形成回环。
 
 ## 顶层字段
 
