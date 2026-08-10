@@ -63,7 +63,7 @@ This example represents “preferred interceptor -> Cloudflare DoH -> Tencent Do
 }
 ```
 
-`local` is not the system resolver. Put an explicit numeric address for a router, SmartDNS instance, or another resolver and do not overlap the listener.
+`local` is not the system resolver or a proxy layer. Put an explicit numeric address for a router, corporate DNS, SmartDNS instance, or another resolver and do not overlap the listener. Do not point it at a local port captured again by sing-box, TUN, or DNS hijacking, or the request will loop.
 
 ## Top-level fields
 
