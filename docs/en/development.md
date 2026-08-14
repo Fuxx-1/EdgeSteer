@@ -37,7 +37,7 @@ Validate only the configuration:
 cargo run --release -- --config config.example.json --check-config
 ```
 
-Tests do not depend on CI access to Cloudflare or Tencent. Network integration tests use a local fake UDP endpoint; key constraints for other transports are covered by configuration validation and pure unit tests, including response correlation, fallback order, keywords, dynamic local caching, interceptor rewriting, and reloads.
+Tests do not depend on CI access to Cloudflare or Tencent. Network integration tests use a local fake UDP endpoint; key constraints for other transports are covered by configuration validation and pure unit tests, including response correlation, fallback order, keywords, SRS domain rules, dynamic local caching, interceptor rewriting, and reloads.
 
 ## Change rules
 
@@ -64,8 +64,8 @@ The workflow builds Linux x86_64, Intel macOS, Apple Silicon macOS, and Windows 
 Example:
 
 ```sh
-git tag -a v0.3.0 -m "EdgeSteer v0.3.0"
-git push origin v0.3.0
+git tag -a v0.4.0 -m "EdgeSteer v0.4.0"
+git push origin v0.4.0
 ```
 
 Before a release, ensure the worktree is clean, `cargo test --locked --all-targets` passes, the example configuration validates, and the release workflow builds on every target runner.

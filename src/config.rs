@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -20,6 +20,8 @@ pub struct FileConfig {
     pub request_timeout_ms: u64,
     pub entry: String,
     pub plugins: Vec<PluginConfig>,
+    #[serde(default)]
+    pub rule_sets: Vec<RuleSetConfig>,
     pub layers: Vec<LayerConfig>,
 }
 
@@ -31,6 +33,7 @@ impl Default for FileConfig {
             request_timeout_ms: default_request_timeout_ms(),
             entry: String::new(),
             plugins: Vec::new(),
+            rule_sets: Vec::new(),
             layers: Vec::new(),
         }
     }
@@ -68,6 +71,17 @@ impl FileConfig {
             plugin.validate()?;
         }
 
+        let mut rule_set_tags = HashSet::new();
+        for rule_set in &self.rule_sets {
+            if rule_set.tag.trim().is_empty() {
+                bail!("rule set tag cannot be empty");
+            }
+            if !rule_set_tags.insert(rule_set.tag.as_str()) {
+                bail!("duplicate rule set tag {:?}", rule_set.tag);
+            }
+            rule_set.validate()?;
+        }
+
         let mut layer_tags = HashSet::new();
         for layer in &self.layers {
             if layer.tag.trim().is_empty() {
@@ -76,7 +90,7 @@ impl FileConfig {
             if !layer_tags.insert(layer.tag.as_str()) {
                 bail!("duplicate layer tag {:?}", layer.tag);
             }
-            layer.validate(self.listener.address, &plugin_tags)?;
+            layer.validate(self.listener.address, &plugin_tags, &rule_set_tags)?;
         }
         if !layer_tags.contains(self.entry.as_str()) {
             bail!("entry layer {:?} does not exist", self.entry);
@@ -110,14 +124,32 @@ impl FileConfig {
         self.plugins.iter().find(|plugin| plugin.tag == tag)
     }
 
+    pub fn rule_set(&self, tag: &str) -> Option<&RuleSetConfig> {
+        self.rule_sets.iter().find(|rule_set| rule_set.tag == tag)
+    }
+
     /// For a single-question request, the first declared matching layer is
     /// selected directly. Otherwise the configured entry layer is used.
     pub fn select_layer(&self, domain: Option<&str>) -> &str {
+        self.select_layer_with_rule_sets(domain, |_, _| false)
+    }
+
+    /// For a single-question request, the first declared layer whose keyword
+    /// or loaded rule-set matcher succeeds is selected directly. Otherwise
+    /// the configured entry layer is used.
+    pub fn select_layer_with_rule_sets<F>(&self, domain: Option<&str>, rule_set_matches: F) -> &str
+    where
+        F: Fn(&str, &str) -> bool,
+    {
         domain
             .and_then(|domain| {
                 self.layers
                     .iter()
-                    .find(|layer| layer.matcher.matches(domain))
+                    .find(|layer| {
+                        layer
+                            .matcher
+                            .matches_with_rule_sets(domain, &rule_set_matches)
+                    })
                     .map(|layer| layer.tag.as_str())
             })
             .unwrap_or(&self.entry)
@@ -187,6 +219,112 @@ impl Default for CloudflareConfig {
             range_refresh_secs: 24 * 60 * 60,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuleSetConfig {
+    pub tag: String,
+    #[serde(rename = "type")]
+    pub kind: RuleSetType,
+    /// Local `.srs` source path.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    /// HTTPS source URL for a remote `.srs` rule set.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Refresh period. The default is 24 hours for remote sources and 60
+    /// seconds for local sources.
+    #[serde(default)]
+    pub update_interval_secs: Option<u64>,
+    /// Per-download deadline for remote sources.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+impl RuleSetConfig {
+    fn validate(&self) -> Result<()> {
+        if self.update_interval_secs.is_some_and(|value| value == 0) {
+            bail!(
+                "rule set {:?} update_interval_secs must be greater than zero",
+                self.tag
+            );
+        }
+        match self.kind {
+            RuleSetType::Local => {
+                if self.url.is_some() || self.timeout_ms.is_some() {
+                    bail!(
+                        "local rule set {:?} only accepts path and update_interval_secs",
+                        self.tag
+                    );
+                }
+                if self
+                    .path
+                    .as_ref()
+                    .is_none_or(|path| path.as_os_str().is_empty())
+                {
+                    bail!("local rule set {:?} requires a non-empty path", self.tag);
+                }
+            }
+            RuleSetType::Remote => {
+                if self.path.is_some() {
+                    bail!(
+                        "remote rule set {:?} only accepts url, update_interval_secs, and timeout_ms",
+                        self.tag
+                    );
+                }
+                self.endpoint()?;
+                if self.timeout_ms() == 0 {
+                    bail!("remote rule set {:?} has a zero timeout", self.tag);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn update_interval_secs(&self) -> u64 {
+        self.update_interval_secs.unwrap_or(match self.kind {
+            RuleSetType::Local => 60,
+            RuleSetType::Remote => 24 * 60 * 60,
+        })
+    }
+
+    pub fn timeout_ms(&self) -> u64 {
+        self.timeout_ms.unwrap_or(10_000)
+    }
+
+    pub fn local_path(&self) -> &Path {
+        self.path.as_deref().expect("validated local rule set path")
+    }
+
+    pub fn endpoint(&self) -> Result<Url> {
+        let raw_url = self
+            .url
+            .as_deref()
+            .context("remote rule set requires url")?;
+        let endpoint =
+            Url::parse(raw_url).with_context(|| format!("parse rule set URL {raw_url:?}"))?;
+        if endpoint.scheme() != "https" {
+            bail!("rule set URL must use https: {raw_url:?}");
+        }
+        if endpoint.host_str().is_none() {
+            bail!("rule set URL must include a hostname: {raw_url:?}");
+        }
+        if !endpoint.username().is_empty() || endpoint.password().is_some() {
+            bail!("rule set URL must not contain credentials");
+        }
+        if endpoint.fragment().is_some() {
+            bail!("rule set URL must not contain a fragment");
+        }
+        Ok(endpoint)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleSetType {
+    Local,
+    Remote,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -274,8 +412,13 @@ impl LayerConfig {
         self.refresh_secs.unwrap_or_else(default_local_refresh_secs)
     }
 
-    fn validate(&self, listener: SocketAddr, plugin_tags: &HashSet<&str>) -> Result<()> {
-        self.matcher.validate(&self.tag)?;
+    fn validate(
+        &self,
+        listener: SocketAddr,
+        plugin_tags: &HashSet<&str>,
+        rule_set_tags: &HashSet<&str>,
+    ) -> Result<()> {
+        self.matcher.validate(&self.tag, rule_set_tags)?;
         match self.kind {
             LayerType::Udp | LayerType::Tcp => {
                 self.validate_network(listener)?;
@@ -454,11 +597,16 @@ pub enum LayerType {
 pub struct KeywordMatch {
     #[serde(default)]
     pub mode: KeywordMatchMode,
+    #[serde(default)]
     pub keywords: Vec<String>,
+    /// sing-box SRS rule-set tags. A matching rule set and a matching keyword
+    /// are alternatives, so either can select this layer.
+    #[serde(default)]
+    pub rule_sets: Vec<String>,
 }
 
 impl KeywordMatch {
-    fn validate(&self, layer_tag: &str) -> Result<()> {
+    fn validate(&self, layer_tag: &str, rule_set_tags: &HashSet<&str>) -> Result<()> {
         if self
             .keywords
             .iter()
@@ -471,12 +619,36 @@ impl KeywordMatch {
         {
             bail!("layer {layer_tag:?} label keywords cannot contain a dot");
         }
+        if self
+            .rule_sets
+            .iter()
+            .any(|rule_set| rule_set.trim().is_empty())
+        {
+            bail!("layer {layer_tag:?} match.rule_sets cannot contain an empty value");
+        }
+        let mut referenced = HashSet::new();
+        for rule_set in &self.rule_sets {
+            if !rule_set_tags.contains(rule_set.as_str()) {
+                bail!("layer {layer_tag:?} match references unknown rule set {rule_set:?}");
+            }
+            if !referenced.insert(rule_set.as_str()) {
+                bail!("layer {layer_tag:?} match references rule set {rule_set:?} more than once");
+            }
+        }
         Ok(())
     }
 
     pub fn matches(&self, domain: &str) -> bool {
+        self.matches_with_rule_sets(domain, &|_, _| false)
+    }
+
+    pub fn matches_with_rule_sets(
+        &self,
+        domain: &str,
+        rule_set_matches: &impl Fn(&str, &str) -> bool,
+    ) -> bool {
         let domain = domain.trim_end_matches('.').to_ascii_lowercase();
-        match self.mode {
+        let keyword_matches = match self.mode {
             KeywordMatchMode::Label => self.keywords.iter().any(|keyword| {
                 domain
                     .split('.')
@@ -486,7 +658,12 @@ impl KeywordMatch {
                 .keywords
                 .iter()
                 .any(|keyword| domain.contains(&keyword.trim().to_ascii_lowercase())),
-        }
+        };
+        keyword_matches
+            || self
+                .rule_sets
+                .iter()
+                .any(|rule_set| rule_set_matches(rule_set, &domain))
     }
 }
 
@@ -509,6 +686,8 @@ pub struct OptimizerConfig {
     pub timeout_ms: u64,
     pub concurrency: usize,
     pub samples_per_cidr: usize,
+    pub probes_per_candidate: usize,
+    pub compatibility_hosts: Vec<String>,
     pub max_candidates: usize,
     pub candidates: Vec<String>,
 }
@@ -524,6 +703,8 @@ impl Default for OptimizerConfig {
             timeout_ms: 3_000,
             concurrency: 32,
             samples_per_cidr: 1,
+            probes_per_candidate: 3,
+            compatibility_hosts: Vec::new(),
             max_candidates: 128,
             candidates: Vec::new(),
         }
@@ -541,9 +722,13 @@ impl OptimizerConfig {
         if self.interval_secs == 0 || self.timeout_ms == 0 {
             bail!("optimizer.interval_secs and optimizer.timeout_ms must be greater than zero");
         }
-        if self.concurrency == 0 || self.samples_per_cidr == 0 || self.max_candidates == 0 {
+        if self.concurrency == 0
+            || self.samples_per_cidr == 0
+            || self.probes_per_candidate == 0
+            || self.max_candidates == 0
+        {
             bail!(
-                "optimizer.concurrency, optimizer.samples_per_cidr, and optimizer.max_candidates must be greater than zero"
+                "optimizer.concurrency, optimizer.samples_per_cidr, optimizer.probes_per_candidate, and optimizer.max_candidates must be greater than zero"
             );
         }
         if self.test_host.trim().is_empty()
@@ -551,6 +736,25 @@ impl OptimizerConfig {
             || self.test_port == 0
         {
             bail!("optimizer test_host, test_path, or test_port is invalid");
+        }
+        let mut compatibility_hosts = HashSet::new();
+        for host in &self.compatibility_hosts {
+            let normalized = host.trim().trim_end_matches('.');
+            if normalized.is_empty() || normalized.parse::<IpAddr>().is_ok() {
+                bail!(
+                    "invalid optimizer compatibility host {host:?}; use a DNS hostname without whitespace or a trailing dot"
+                );
+            }
+            if host != normalized {
+                bail!(
+                    "invalid optimizer compatibility host {host:?}; remove whitespace and the trailing dot"
+                );
+            }
+            ServerName::try_from(normalized.to_owned())
+                .with_context(|| format!("invalid optimizer compatibility host {normalized:?}"))?;
+            if !compatibility_hosts.insert(normalized.to_ascii_lowercase()) {
+                bail!("duplicate optimizer compatibility host {normalized:?}");
+            }
         }
         for candidate in &self.candidates {
             if candidate.parse::<IpAddr>().is_err() && candidate.parse::<ipnet::IpNet>().is_err() {
@@ -569,22 +773,50 @@ mod tests {
         {
           "listener": { "address": "127.0.0.1:53535" },
           "entry": "preferred",
+          "rule_sets": [
+            {
+              "tag": "cn",
+              "type": "remote",
+              "url": "https://example.com/geosite-cn.srs"
+            },
+            {
+              "tag": "overseas",
+              "type": "remote",
+              "url": "https://example.com/geosite-geolocation-not-cn.srs"
+            }
+          ],
           "plugins": [{
             "tag": "cloudflare-preferred",
             "type": "cloudflare_preferred"
           }],
           "layers": [
             {
+              "tag": "local-keyword",
+              "type": "local",
+              "refresh_secs": 30,
+              "match": {
+                "mode": "contains",
+                "keywords": ["b2c", "mi", "local"]
+              }
+            },
+            {
+              "tag": "cn-preferred",
+              "type": "interceptor",
+              "plugin": "cloudflare-preferred",
+              "fallback": "tencent",
+              "match": { "rule_sets": ["cn"] }
+            },
+            {
+              "tag": "overseas-preferred",
+              "type": "interceptor",
+              "plugin": "cloudflare-preferred",
+              "fallback": "cf",
+              "match": { "rule_sets": ["overseas"] }
+            },
+            {
               "tag": "preferred",
               "type": "interceptor",
               "plugin": "cloudflare-preferred",
-              "fallback": "cf"
-            },
-            {
-              "tag": "cf",
-              "type": "doh",
-              "address": "1.1.1.1:443",
-              "url": "https://cloudflare-dns.com/dns-query",
               "fallback": "tencent"
             },
             {
@@ -592,26 +824,53 @@ mod tests {
               "type": "doh",
               "address": "120.53.53.53:443",
               "url": "https://doh.pub/dns-query",
-              "fallback": "local",
-              "match": { "keywords": ["cn"] }
+              "fallback": "cf"
             },
             {
-              "tag": "local",
+              "tag": "cf",
+              "type": "doh",
+              "address": "1.1.1.1:443",
+              "url": "https://cloudflare-dns.com/dns-query",
+              "fallback": "local-fallback"
+            },
+            {
+              "tag": "local-fallback",
               "type": "local",
-              "refresh_secs": 30,
-              "match": { "keywords": ["local", "lan"] }
+              "refresh_secs": 30
             }
           ]
         }
     "#;
 
+    fn layer_mut<'config>(config: &'config mut FileConfig, tag: &str) -> &'config mut LayerConfig {
+        config
+            .layers
+            .iter_mut()
+            .find(|layer| layer.tag == tag)
+            .expect("fixture layer exists")
+    }
+
     #[test]
     fn parses_the_json_layer_chain() {
         let config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
         config.validate().expect("configuration validates");
-        assert_eq!(config.select_layer(Some("printer.local.")), "local");
-        assert_eq!(config.select_layer(Some("www.example.cn.")), "tencent");
-        assert_eq!(config.select_layer(Some("notlocal.example.")), "preferred");
+        assert_eq!(
+            config.select_layer(Some("printer.b2c.example.")),
+            "local-keyword"
+        );
+        assert_eq!(
+            config.select_layer_with_rule_sets(Some("www.example.cn."), |tag, domain| {
+                tag == "cn" && domain == "www.example.cn"
+            }),
+            "cn-preferred"
+        );
+        assert_eq!(
+            config.select_layer_with_rule_sets(Some("www.example.com."), |tag, domain| {
+                tag == "overseas" && domain == "www.example.com"
+            }),
+            "overseas-preferred"
+        );
+        assert_eq!(config.select_layer(Some("www.example.test.")), "preferred");
         assert_eq!(
             config.select_layer(Some("www.cloudflare.com.")),
             "preferred"
@@ -621,44 +880,131 @@ mod tests {
     #[test]
     fn rejects_a_fallback_cycle() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        config.layers[3].fallback = Some("preferred".to_owned());
+        layer_mut(&mut config, "local-fallback").fallback = Some("preferred".to_owned());
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn rejects_doh_with_a_mismatched_bootstrap_port() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        config.layers[1].address = Some("1.1.1.1:8443".parse().unwrap());
+        layer_mut(&mut config, "cf").address = Some("1.1.1.1:8443".parse().unwrap());
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn rejects_an_empty_keyword() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        config.layers[3].matcher.keywords.push(" ".to_owned());
+        layer_mut(&mut config, "local-keyword")
+            .matcher
+            .keywords
+            .push(" ".to_owned());
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn rejects_a_fixed_address_for_a_local_layer() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        config.layers[3].address = Some("10.0.0.53:53".parse().unwrap());
+        layer_mut(&mut config, "local-fallback").address = Some("10.0.0.53:53".parse().unwrap());
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn rejects_a_zero_local_refresh_interval() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        config.layers[3].refresh_secs = Some(0);
+        layer_mut(&mut config, "local-fallback").refresh_secs = Some(0);
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn supports_explicit_literal_contains_matching() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        config.layers[2].matcher.mode = KeywordMatchMode::Contains;
-        config.layers[2].matcher.keywords = vec!["video".to_owned()];
+        let matcher = &mut layer_mut(&mut config, "local-keyword").matcher;
+        matcher.mode = KeywordMatchMode::Contains;
+        matcher.keywords = vec!["video".to_owned()];
 
-        assert_eq!(config.select_layer(Some("my-video.example.")), "tencent");
+        assert_eq!(
+            config.select_layer(Some("my-video.example.")),
+            "local-keyword"
+        );
+    }
+
+    #[test]
+    fn selects_the_first_matching_sing_box_rule_set_layer() {
+        let config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        assert_eq!(
+            config.select_layer_with_rule_sets(Some("www.example.cn."), |tag, domain| {
+                tag == "cn" && domain == "www.example.cn"
+            }),
+            "cn-preferred"
+        );
+    }
+
+    #[test]
+    fn rejects_a_layer_that_references_an_unknown_rule_set() {
+        let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        layer_mut(&mut config, "local-keyword")
+            .matcher
+            .rule_sets
+            .push("missing".to_owned());
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn example_configuration_routes_regions_through_the_interceptor() {
+        let config: FileConfig = serde_json::from_str(include_str!("../config.example.json"))
+            .expect("valid example JSON");
+        config.validate().expect("example configuration validates");
+
+        assert_eq!(
+            config.select_layer(Some("work.be.mi.com.")),
+            "local-keyword"
+        );
+        assert_eq!(
+            config.select_layer_with_rule_sets(Some("www.qq.com."), |tag, _| tag == "geosite-cn"),
+            "cn-preferred"
+        );
+        assert_eq!(
+            config.select_layer_with_rule_sets(Some("www.google.com."), |tag, _| {
+                tag == "geosite-geolocation-not-cn"
+            }),
+            "overseas-preferred"
+        );
+        assert_eq!(
+            config
+                .layer("cn-preferred")
+                .and_then(|layer| layer.fallback.as_deref()),
+            Some("tencent-doh")
+        );
+        assert_eq!(
+            config
+                .layer("overseas-preferred")
+                .and_then(|layer| layer.fallback.as_deref()),
+            Some("cloudflare-doh")
+        );
+        assert_eq!(
+            config
+                .layer("preferred")
+                .and_then(|layer| layer.fallback.as_deref()),
+            Some("tencent-doh")
+        );
+        let optimizer = &config
+            .plugin("cloudflare-preferred")
+            .expect("example plugin exists")
+            .optimizer;
+        assert_eq!(optimizer.candidates.len(), 16);
+        assert_eq!(optimizer.samples_per_cidr, 40);
+        assert_eq!(optimizer.max_candidates, 640);
+    }
+
+    #[test]
+    fn rejects_non_canonical_compatibility_hosts() {
+        let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        let optimizer = &mut config.plugins[0].optimizer;
+        optimizer.enabled = true;
+        optimizer.candidates = vec!["104.16.0.0/13".to_owned()];
+        optimizer.compatibility_hosts = vec![" shu26.cfd ".to_owned()];
+
+        assert!(config.validate().is_err());
     }
 }

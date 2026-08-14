@@ -37,7 +37,7 @@ cargo build --locked --release
 cargo run --release -- --config config.example.json --check-config
 ```
 
-测试不依赖 CI 访问 Cloudflare 或 Tencent。网络集成测试使用本地 fake UDP endpoint，其他 transport 的关键约束通过配置校验和纯函数单元测试覆盖，重点验证响应关联校验、fallback 顺序、关键词、动态 local 缓存、拦截器改写和热重载。
+测试不依赖 CI 访问 Cloudflare 或 Tencent。网络集成测试使用本地 fake UDP endpoint，其他 transport 的关键约束通过配置校验和纯函数单元测试覆盖，重点验证响应关联校验、fallback 顺序、关键词、SRS 域名规则、动态 local 缓存、拦截器改写和热重载。
 
 ## 变更约定
 
@@ -64,8 +64,8 @@ cargo run --release -- --config config.example.json --check-config
 示例：
 
 ```sh
-git tag -a v0.3.0 -m "EdgeSteer v0.3.0"
-git push origin v0.3.0
+git tag -a v0.4.0 -m "EdgeSteer v0.4.0"
+git push origin v0.4.0
 ```
 
 发布前至少确认工作区干净、`cargo test --locked --all-targets` 通过、配置示例可用，并且 release workflow 能在目标 runner 上完成构建。

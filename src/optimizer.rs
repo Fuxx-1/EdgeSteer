@@ -27,7 +27,16 @@ use crate::{
 #[derive(Debug)]
 struct ProbeResult {
     address: IpAddr,
-    latency: Duration,
+    score: Duration,
+    median_latency: Duration,
+    worst_latency: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProbeTiming {
+    score: Duration,
+    median_latency: Duration,
+    worst_latency: Duration,
 }
 
 pub async fn run_loop(state: SharedState) {
@@ -128,17 +137,31 @@ async fn choose_preferred(settings: &OptimizerConfig, ranges: &[IpNet]) -> Resul
 }
 
 fn is_faster(candidate: &ProbeResult, current: Option<&ProbeResult>) -> bool {
-    current.is_none_or(|current| candidate.latency < current.latency)
+    current.is_none_or(|current| {
+        candidate.score < current.score
+            || (candidate.score == current.score
+                && candidate.median_latency < current.median_latency)
+            || (candidate.score == current.score
+                && candidate.median_latency == current.median_latency
+                && candidate.worst_latency < current.worst_latency)
+    })
 }
 
 fn build_tls_connector() -> TlsConnector {
+    TlsConnector::from(Arc::new(build_tls_client_config()))
+}
+
+fn build_tls_client_config() -> ClientConfig {
     crate::install_rustls_crypto_provider();
     let mut roots = RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let config = ClientConfig::builder()
+    let mut config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
-    TlsConnector::from(Arc::new(config))
+    // Match the ALPN offered by normal HTTPS clients. Without it, an edge can
+    // pass this probe but reset browser-like TLS handshakes after DNS rewrite.
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    config
 }
 
 async fn probe_candidate(
@@ -146,20 +169,85 @@ async fn probe_candidate(
     settings: OptimizerConfig,
     connector: TlsConnector,
 ) -> Result<ProbeResult> {
-    let timeout_duration = Duration::from_millis(settings.timeout_ms);
+    let mut samples = Vec::with_capacity(settings.probes_per_candidate);
+    for _ in 0..settings.probes_per_candidate {
+        // A candidate must pass every probe. This rejects fast-but-flaky edges
+        // instead of allowing one lucky response to win the round.
+        samples.push(probe_once(address, &settings, connector.clone()).await?);
+    }
+    for host in &settings.compatibility_hosts {
+        probe_compatibility_host(address, host, &settings, connector.clone())
+            .await
+            .with_context(|| format!("compatibility probe for {host:?} failed"))?;
+    }
+    let timing = score_probe_samples(&mut samples);
+
+    Ok(ProbeResult {
+        address,
+        score: timing.score,
+        median_latency: timing.median_latency,
+        worst_latency: timing.worst_latency,
+    })
+}
+
+async fn probe_once(
+    address: IpAddr,
+    settings: &OptimizerConfig,
+    connector: TlsConnector,
+) -> Result<Duration> {
+    let (latency, header) = probe_http(
+        address,
+        settings.test_port,
+        &settings.test_host,
+        &settings.test_path,
+        settings.timeout_ms,
+        connector,
+    )
+    .await?;
+    validate_cloudflare_probe_response(&header)?;
+    Ok(latency)
+}
+
+async fn probe_compatibility_host(
+    address: IpAddr,
+    host: &str,
+    settings: &OptimizerConfig,
+    connector: TlsConnector,
+) -> Result<()> {
+    let (_, header) = probe_http(
+        address,
+        settings.test_port,
+        host,
+        "/",
+        settings.timeout_ms,
+        connector,
+    )
+    .await?;
+    validate_compatibility_probe_response(&header)
+}
+
+async fn probe_http(
+    address: IpAddr,
+    port: u16,
+    host: &str,
+    path: &str,
+    timeout_ms: u64,
+    connector: TlsConnector,
+) -> Result<(Duration, Vec<u8>)> {
+    let timeout_duration = Duration::from_millis(timeout_ms);
     let started_at = Instant::now();
     let stream = timeout(
         timeout_duration,
-        TcpStream::connect(SocketAddr::new(address, settings.test_port)),
+        TcpStream::connect(SocketAddr::new(address, port)),
     )
     .await
     .context("TCP connection timed out")??;
-    let server_name = ServerName::try_from(settings.test_host.clone())
-        .context("optimizer.test_host is not a valid TLS server name")?;
+    let server_name = ServerName::try_from(host.to_owned())
+        .with_context(|| format!("optimizer probe host {host:?} is not a valid TLS server name"))?;
     let mut stream = timeout(timeout_duration, connector.connect(server_name, stream))
         .await
         .context("TLS handshake timed out")??;
-    let request = probe_request(&settings);
+    let request = probe_request(host, path);
     timeout(timeout_duration, stream.write_all(request.as_bytes()))
         .await
         .context("HTTP probe write timed out")??;
@@ -178,18 +266,36 @@ async fn probe_candidate(
         }
         header.extend_from_slice(&buffer[..read]);
     }
-    validate_cloudflare_probe_response(&header)?;
-
-    Ok(ProbeResult {
-        address,
-        latency: started_at.elapsed(),
-    })
+    Ok((started_at.elapsed(), header))
 }
 
-fn probe_request(settings: &OptimizerConfig) -> String {
+fn score_probe_samples(samples: &mut [Duration]) -> ProbeTiming {
+    debug_assert!(!samples.is_empty());
+    samples.sort_unstable();
+
+    let lower_middle = samples[(samples.len() - 1) / 2];
+    let upper_middle = samples[samples.len() / 2];
+    let median_latency = lower_middle.saturating_add(upper_middle) / 2;
+    let worst_latency = *samples.last().expect("samples cannot be empty");
+    // Penalize a slow tail while retaining the responsiveness of the median.
+    let score = median_latency.saturating_add(
+        worst_latency
+            .saturating_sub(median_latency)
+            .checked_div(2)
+            .unwrap_or_default(),
+    );
+
+    ProbeTiming {
+        score,
+        median_latency,
+        worst_latency,
+    }
+}
+
+fn probe_request(host: &str, path: &str) -> String {
     format!(
         "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: edgesteer/0.1\r\nConnection: close\r\n\r\n",
-        settings.test_path, settings.test_host
+        path, host
     )
 }
 
@@ -203,6 +309,20 @@ fn validate_cloudflare_probe_response(header: &[u8]) -> Result<()> {
         .any(|line| line.trim() == "server: cloudflare")
     {
         bail!("Cloudflare probe response lacks server: cloudflare");
+    }
+    Ok(())
+}
+
+fn validate_compatibility_probe_response(header: &[u8]) -> Result<()> {
+    let header = String::from_utf8_lossy(header);
+    let status = header
+        .lines()
+        .next()
+        .and_then(|line| line.split_ascii_whitespace().nth(1))
+        .and_then(|status| status.parse::<u16>().ok())
+        .context("compatibility probe returned an invalid HTTP status line")?;
+    if !(200..400).contains(&status) {
+        bail!("compatibility probe returned HTTP status {status}");
     }
     Ok(())
 }
@@ -370,6 +490,46 @@ mod tests {
     #[test]
     fn trace_probe_uses_get() {
         let settings = OptimizerConfig::default();
-        assert!(probe_request(&settings).starts_with("GET /cdn-cgi/trace HTTP/1.1\r\n"));
+        assert!(
+            probe_request(&settings.test_host, &settings.test_path)
+                .starts_with("GET /cdn-cgi/trace HTTP/1.1\r\n")
+        );
+    }
+
+    #[test]
+    fn trace_probe_advertises_http1_alpn() {
+        assert_eq!(build_tls_client_config().alpn_protocols, vec![b"http/1.1"]);
+    }
+
+    #[test]
+    fn stable_score_penalizes_slow_tail() {
+        let mut stable = [
+            Duration::from_millis(400),
+            Duration::from_millis(410),
+            Duration::from_millis(420),
+        ];
+        let mut spiky = [
+            Duration::from_millis(190),
+            Duration::from_millis(250),
+            Duration::from_millis(1_970),
+        ];
+
+        let stable_timing = score_probe_samples(&mut stable);
+        let spiky_timing = score_probe_samples(&mut spiky);
+
+        assert_eq!(stable_timing.score, Duration::from_millis(415));
+        assert_eq!(spiky_timing.score, Duration::from_millis(1_110));
+        assert!(stable_timing.score < spiky_timing.score);
+    }
+
+    #[test]
+    fn compatibility_probe_accepts_redirects_and_rejects_1034() {
+        assert!(validate_compatibility_probe_response(b"HTTP/1.1 302 Found\r\n\r\n").is_ok());
+        assert!(
+            validate_compatibility_probe_response(
+                b"HTTP/1.1 403 Forbidden\r\nServer: cloudflare\r\n\r\nerror code: 1034"
+            )
+            .is_err()
+        );
     }
 }

@@ -7,41 +7,47 @@ EdgeSteer is not a string heuristic that replaces addresses when a domain looks 
 ## System shape
 
 ```mermaid
-flowchart LR
+flowchart TB
     C["DNS client request"] --> P["Parse and validate"]
-    P --> R["Select start by keyword"]
-    R --> I["Interceptor chain"]
-    I --> D["Cloudflare DoH"]
-    D --> T["Tencent DoH"]
-    T --> L["Dynamic system DNS upstreams"]
-    I -. "successful response" .-> W["Validate and rewrite"]
-    D -. "network/protocol failure" .-> T
-    T -. "network/protocol failure" .-> L
+    P --> R["Select start by domain rule"]
+    R -->|"b2c / mi / local"| K["Dynamic system DNS upstreams"]
+    R -->|"geosite-cn"| CN["cn-preferred<br/>preferred interceptor"]
+    R -->|"geosite-geolocation-!cn"| OS["overseas-preferred<br/>preferred interceptor"]
+    R -->|"unmatched / multi-question"| DF["preferred<br/>preferred interceptor"]
+    CN --> T["Tencent DoH"]
+    DF --> T
+    OS --> D["Cloudflare DoH"]
+    T -. "network/protocol failure" .-> D
+    D -. "network/protocol failure" .-> L["Dynamic system DNS upstreams"]
+    T -. "successful response" .-> W["Validate and rewrite"]
+    D -. "successful response" .-> W
     W --> O["Return to client"]
     L --> O
+    K --> O
 ```
 
-Every layer is a node and its `fallback` points to the next node. The JSON describes a graph, but execution follows one validated, acyclic successor chain. Keyword rules choose the start; they do not duplicate a query across resolvers.
+Every layer is a node and its `fallback` points to the next node. The JSON describes a graph, but execution follows one validated, acyclic successor chain. Keywords and SRS domain rule sets choose the start; they do not duplicate a query across resolvers. The example order is `local-keyword`, `cn-preferred`, `overseas-preferred`, then `preferred`: local names go straight to dynamic local DNS, China uses Tencent first, known overseas domains use Cloudflare first, and unmatched domains retain the full Tencent → Cloudflare → local fallback.
 
 ## Component responsibilities
 
 | Module | Responsibility |
 | --- | --- |
 | `src/dns.rs` | UDP/TCP listeners, request parsing, request deadline, layer execution, upstream correlation checks, and response encoding. |
-| `src/config.rs` | Strict JSON parsing, field constraints, layer/plugin references, acyclic fallback validation, keyword matching, and DoH/DoT validation. |
+| `src/config.rs` | Strict JSON parsing, field constraints, layer/plugin/rule-set references, acyclic fallback validation, domain matching, and DoH/DoT validation. |
 | `src/local_dns.rs` | Discovers local upstreams from system network configuration, filters loopback/self addresses, refreshes periodically, and rediscovers after local failures. |
 | `src/plugins.rs` | Statically built-in interceptors. `cloudflare_preferred` rewrites A, AAAA, HTTPS/SVCB hints and clears DNSSEC state. |
 | `src/optimizer.rs` | TCP, TLS, and HTTP probes for Cloudflare candidates; chooses the fastest IPv4 and IPv6 independently. |
 | `src/ranges.rs` | Built-in Cloudflare ranges at startup and periodic refresh from official `ips-v4` and `ips-v6` endpoints; failed refreshes keep the current list. |
-| `src/state.rs` | `ArcSwap` runtime snapshot, DoH client cache, and concurrency control. |
+| `src/rule_sets.rs` | Native domain-rule loading for sing-box SRS v1–v5, with local/remote refresh and last-good retention. |
+| `src/state.rs` | `ArcSwap` runtime snapshots, rule sets, Cloudflare ranges, and the DoH client cache. |
 | `src/watcher.rs` | Configuration watcher with approximately 250 ms debounce and atomic replacement after validation. |
 
 ## Request lifecycle
 
 1. The listener receives a UDP datagram or TCP length-prefixed frame. UDP work is limited to 128 in-flight permits; excess bursts are dropped so clients can retry.
 2. Only DNS queries are accepted. Malformed packets, DNS responses received on the listener, and unparseable requests are discarded.
-3. The request reads one `RuntimeConfig` snapshot and the current Cloudflare ranges. A single-question request provides its QNAME; a multi-question request uses `entry` directly.
-4. For one question, the first matching `match` in `layers` declaration order selects the start. Without a match, execution starts at `entry`. A selected layer follows only its own `fallback` chain.
+3. The request reads one `RuntimeConfig` snapshot, current Cloudflare ranges, and loaded rule sets. A single-question request provides its QNAME; a multi-question request uses `entry` directly.
+4. For one question, the first matching keyword or SRS rule set in `layers` declaration order selects the start. Without a match, execution starts at `entry`. A selected layer follows only its own `fallback` chain.
 5. Network layers use both a global request deadline and a per-layer timeout. `local` selects cached system-DNS addresses in order. A truncated UDP response is retried over TCP against the same endpoint.
 6. An upstream response must match transaction ID, QR/message type, opcode, and question. DoH also requires a successful HTTP status, a non-empty body, and `application/dns-message`.
 7. After a network layer succeeds, interceptors run in reverse entry order. `cloudflare_preferred` rewrites only when all relevant addresses are in the active Cloudflare ranges; no rewrite is a successful no-op.
@@ -57,11 +63,11 @@ An interceptor does not synthesize a complete DNS answer. It can only change all
 
 Detection uses numeric addresses in the response and IP hints in HTTPS/SVCB records. They must belong to the active Cloudflare ranges. The ranges start from a built-in list and are refreshed from the official lists; a failed refresh never clears the active list.
 
-The optimizer samples configured IP/CIDR candidates. A candidate must pass TCP connect, TLS handshake, and the HTTP probe using `test_host` and `test_path`; the response must be 2xx with `server: cloudflare`. IPv4 and IPv6 are selected independently, and a failed family retains its last good value.
+The optimizer samples configured IP/CIDR candidates. Every candidate runs `probes_per_candidate` consecutive TCP, TLS, and HTTP probes using `test_host` and `test_path`; any failed attempt rejects the candidate. Successful candidates are ranked by median latency plus half of their tail latency, favoring low-latency, stable edges over a one-off fast but jittery response. The response must be 2xx with `server: cloudflare`. When `compatibility_hosts` is configured, a candidate must also return 2xx or 3xx with each business hostname as its SNI and Host header; this rejects Cloudflare 1034 EIV-restricted and otherwise incompatible edges. IPv4 and IPv6 are selected independently, and a failed family retains its last good value.
 
 ## Reload and consistency
 
-The watcher fully parses and validates new JSON before replacing the runtime snapshot. In-flight requests keep their old snapshot and later requests see the new one, so configuration and optimizer state cannot be mixed across generations. Layer changes clear cached DoH clients; when a `local` layer exists, its refresh loop rereads system DNS at the new shortest `refresh_secs` interval.
+The watcher fully parses and validates new JSON before replacing the runtime snapshot. In-flight requests keep their old snapshot and later requests see the new one, so configuration and optimizer state cannot be mixed across generations. The rule-set worker immediately reconciles new definitions and atomically publishes a completed replacement. Layer changes clear cached DoH clients; when a `local` layer exists, its refresh loop rereads system DNS at the new shortest `refresh_secs` interval.
 
 Listener address and `allow_remote` changes cannot rebind sockets dynamically. The file can be accepted, but the process keeps the existing listener and logs that a restart is required; other valid settings still reload.
 
@@ -70,6 +76,6 @@ Listener address and `allow_remote` changes cannot rebind sockets dynamically. T
 - JSON selects only statically compiled built-in plugins; it cannot load libraries, scripts, or shell commands.
 - For DoH, `address` is a fixed numeric bootstrap. The URL hostname supplies TLS SNI, HTTP Host, and certificate validation; proxy environment settings are disabled and redirects are not followed.
 - DoT requires an explicit `server_name` and validates TLS with the bundled WebPKI roots.
-- `local` does not call the system resolver. It reads numeric DNS addresses from system network configuration and filters loopback, unspecified, multicast, IPv6 link-local, listener addresses, and macOS virtual-tunnel services. If system configuration already points to EdgeSteer, it fails rather than looping and cannot restore an overwritten underlay DNS.
+- `local` does not call the system resolver. It reads numeric DNS addresses from system network configuration and filters loopback, unspecified, multicast, IPv6 link-local, listener addresses, and macOS virtual-tunnel services. When a macOS physical service only points at the local listener, it reads that service's current DHCP option 6 DNS instead of looping or pinning an overwritten underlay address.
 - Local queries use native UDP/TCP sockets, which does not mean bypassing sing-box TUN or transparent interception; outer proxy rules must route the underlay DNS correctly.
 - The default listener binds to loopback. If `allow_remote` is enabled, provide network access control, rate limiting, and monitoring.
