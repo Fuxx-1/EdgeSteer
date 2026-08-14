@@ -160,7 +160,15 @@ async fn query_layers(
     state: &SharedState,
 ) -> Result<Message> {
     let domain = (request.queries().len() == 1).then(|| request.queries()[0].name().to_utf8());
-    let mut current = Some(runtime.config.select_layer(domain.as_deref()).to_owned());
+    let rule_sets = state.rule_sets.load_full();
+    let mut current = Some(
+        runtime
+            .config
+            .select_layer_with_rule_sets(domain.as_deref(), |tag, domain| {
+                rule_sets.matches(tag, runtime.config.rule_set(tag), domain)
+            })
+            .to_owned(),
+    );
     let deadline = Instant::now() + Duration::from_millis(runtime.config.request_timeout_ms);
     let mut interceptors = Vec::new();
     let mut last_error = None;
