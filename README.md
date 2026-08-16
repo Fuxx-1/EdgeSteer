@@ -40,7 +40,7 @@ flowchart TB
 
 ## 快速开始
 
-需要 Rust 1.85 或更新版本。发布包覆盖 Linux x86_64、macOS Intel、macOS Apple Silicon 和 Windows x86_64；macOS 发布的是对应架构的 `.dmg` App 磁盘镜像。
+需要 Rust 1.85 或更新版本。发布包覆盖 Linux、macOS 和 Windows 的 x86_64 与 ARM64；macOS 发布的是对应架构的 `.dmg` App 磁盘镜像。
 
 ```sh
 git clone https://github.com/Fuxx-1/EdgeSteer.git
