@@ -41,6 +41,8 @@ flowchart TB
 | `src/rule_sets.rs` | 原生加载 sing-box SRS v1–v5 的域名规则；本地/远程来源定时刷新，失败保留上一份可用规则。 |
 | `src/state.rs` | 用 `ArcSwap` 保存运行时快照、规则集和 Cloudflare 网段，并缓存 DoH client。 |
 | `src/watcher.rs` | 监听配置文件，约 250 ms debounce，校验成功后原子替换；非法文件继续使用旧配置。 |
+| `src/agent.rs` | 轻量常驻 Agent：菜单栏、DNS 引擎生命周期、系统 DNS、登录启动与本机控制通道。它不加载 Iced 或 GPU renderer。 |
+| `src/ui.rs` | 独立的 Iced 配置窗口。关闭窗口即退出该进程并释放 GPU/Metal；Agent 和 DNS 引擎继续在菜单栏运行。 |
 
 ## 一次请求的生命周期
 
@@ -63,13 +65,21 @@ interceptor 不会自行伪造完整 DNS answer。它只能在后继 resolver �
 
 识别依据是响应中的数值地址和 HTTPS/SVCB 的 IP hints 是否落在活动网段。活动网段来自内置列表，并由官方列表定期刷新。刷新失败时不清空当前列表。
 
-optimizer 从配置的 IP/CIDR 候选中采样。每个候选会连续探测 `probes_per_candidate` 次；任何一次 TCP 连接、TLS 握手或以 `test_host`、`test_path` 发起的 HTTP 探测失败都会淘汰该候选。成功候选按中位延迟加一半尾延迟排序，因此低延迟且稳定的地址优先于偶发快但抖动大的地址。响应必须为 2xx 且具有 `server: cloudflare`。配置了 `compatibility_hosts` 时，候选还必须以每个业务域名对应的 SNI 和 Host 返回 2xx 或 3xx；这会排除 Cloudflare 1034 EIV 限制和其他不兼容边缘。IPv4 和 IPv6 独立选择，失败的地址族保留最后一次可用结果。
+optimizer 从配置的 IP/CIDR 候选中采样，并先过滤 `excluded_candidates`，再与 Cloudflare 官方活动网段求交。每个候选会连续探测 `probes_per_candidate` 次；任何一次 TCP 连接、TLS 握手或以 `test_host`、`test_path` 发起的 HTTP 探测失败都会淘汰该候选。成功候选按中位延迟加一半尾延迟排序，因此低延迟且稳定的地址优先于偶发快但抖动大的地址。响应必须为 2xx 且具有 `server: cloudflare`。
+
+启用 optimizer 要求配置至少一个 `compatibility_hosts`。候选还必须以每个业务域名的 SNI 和 Host 连续验证，返回 2xx/3xx 且没有 1034/EIV 拒绝标识才能被选择。此严格模式忽略静态优选值；空选项或失败轮次会清空旧结果。每个真正被 DNS 查询的域名还要经过一次同样的短时 SNI/Host 验证，验证中、失败或过期时直接返回上游答案。这样优选地址不会跨越未验证的 Cloudflare zone；验证缓存最长等于改写 TTL。
 
 ## 热重载与一致性
 
 watcher 先读取并完整校验新 JSON，再替换运行时快照。正在处理的请求继续使用旧快照，后续请求读取新快照；因此不会出现配置字段来自两代、优选状态来自另一代的组合。规则集 worker 会立即按新定义刷新，并在成功后原子替换整份规则；layer 变化会清理 DoH client 缓存；若存在 `local` layer，刷新循环会按新的最短 `refresh_secs` 重新读取系统 DNS。
 
 listener 地址和 `allow_remote` 变化不能动态重绑。文件可以被接受，但当前进程继续监听旧 socket，并记录需要重启；其他有效配置仍可热更新。
+
+## App 生命周期
+
+打包 App 启动后先运行 EdgeSteer Agent。Agent 使用原生事件循环和菜单栏图标，持有 DNS runtime；Iced 配置窗口只在首次启动或从菜单栏打开设置时作为单独子进程运行。控制通道只监听 `127.0.0.1`，并要求状态文件中的随机令牌，因此 UI 不直接持有 DNS runtime。
+
+默认关闭设置窗口会结束 UI 子进程，而不是把窗口和 wgpu/Metal renderer 隐藏在后台。这样 DNS、菜单栏和系统 DNS 接管保持可用，但完整 GUI 资源会立即释放。菜单栏再次打开设置时会创建一个新的 UI 进程。明确选择“退出 EdgeSteer”时，Agent 先恢复它接管的系统 DNS，再停止 resolver，最后关闭仍在运行的设置窗口。
 
 ## 安全边界
 

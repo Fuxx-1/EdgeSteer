@@ -71,10 +71,20 @@ pub async fn run_loop(state: SharedState) {
                     }
                 }
                 Ok(_) => {
-                    warn!(plugin = %plugin.tag, "Cloudflare probe did not produce a usable preferred IP")
+                    if settings.requires_compatibility_gate() {
+                        state.clear_preferred(plugin);
+                        warn!(plugin = %plugin.tag, "Cloudflare compatibility probe did not produce a usable IP; cleared strict preferred IPs");
+                    } else {
+                        warn!(plugin = %plugin.tag, "Cloudflare probe did not produce a usable preferred IP");
+                    }
                 }
                 Err(error) => {
-                    warn!(plugin = %plugin.tag, %error, "Cloudflare probe round failed; retaining previous preferred IPs")
+                    if settings.requires_compatibility_gate() {
+                        state.clear_preferred(plugin);
+                        warn!(plugin = %plugin.tag, %error, "Cloudflare compatibility probe round failed; cleared strict preferred IPs");
+                    } else {
+                        warn!(plugin = %plugin.tag, %error, "Cloudflare probe round failed; retaining previous preferred IPs");
+                    }
                 }
             }
         }
@@ -202,6 +212,7 @@ async fn probe_once(
         &settings.test_path,
         settings.timeout_ms,
         connector,
+        false,
     )
     .await?;
     validate_cloudflare_probe_response(&header)?;
@@ -214,16 +225,31 @@ async fn probe_compatibility_host(
     settings: &OptimizerConfig,
     connector: TlsConnector,
 ) -> Result<()> {
-    let (_, header) = probe_http(
-        address,
-        settings.test_port,
-        host,
-        "/",
-        settings.timeout_ms,
-        connector,
-    )
-    .await?;
-    validate_compatibility_probe_response(&header)
+    for _ in 0..settings.probes_per_candidate {
+        let (_, response) = probe_http(
+            address,
+            settings.test_port,
+            host,
+            "/",
+            settings.timeout_ms,
+            connector.clone(),
+            true,
+        )
+        .await?;
+        validate_compatibility_probe_response(&response)?;
+    }
+    Ok(())
+}
+
+/// Verifies a single selected address for a query hostname. This is used by
+/// the strict response gate and intentionally performs the same repeated
+/// SNI/Host validation as the optimizer's configured compatibility hosts.
+pub async fn verify_compatibility(
+    address: IpAddr,
+    host: &str,
+    settings: &OptimizerConfig,
+) -> Result<()> {
+    probe_compatibility_host(address, host, settings, build_tls_connector()).await
 }
 
 async fn probe_http(
@@ -233,6 +259,7 @@ async fn probe_http(
     path: &str,
     timeout_ms: u64,
     connector: TlsConnector,
+    capture_body_prefix: bool,
 ) -> Result<(Duration, Vec<u8>)> {
     let timeout_duration = Duration::from_millis(timeout_ms);
     let started_at = Instant::now();
@@ -255,18 +282,61 @@ async fn probe_http(
         .await
         .context("HTTP probe flush timed out")??;
 
-    let mut header = Vec::with_capacity(1024);
+    let mut response = Vec::with_capacity(1024);
     let mut buffer = [0_u8; 1024];
-    while header.len() < 8 * 1024 && !header.windows(4).any(|window| window == b"\r\n\r\n") {
+    let mut header_latency = None;
+    let mut body_prefix_limit = None;
+    while response.len() < 12 * 1024 {
         let read = timeout(timeout_duration, stream.read(&mut buffer))
             .await
             .context("HTTP probe read timed out")??;
         if read == 0 {
             break;
         }
-        header.extend_from_slice(&buffer[..read]);
+        response.extend_from_slice(&buffer[..read]);
+        let Some(header_end) = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|index| index + 4)
+        else {
+            continue;
+        };
+        if header_latency.is_none() {
+            header_latency = Some(started_at.elapsed());
+            body_prefix_limit = Some(if capture_body_prefix {
+                compatibility_body_prefix_limit(&response[..header_end], header_end)
+            } else {
+                header_end
+            });
+        }
+        if response.len() >= body_prefix_limit.expect("header limit is initialized") {
+            break;
+        }
     }
-    Ok((started_at.elapsed(), header))
+    Ok((
+        header_latency.unwrap_or_else(|| started_at.elapsed()),
+        response,
+    ))
+}
+
+fn compatibility_body_prefix_limit(header: &[u8], header_end: usize) -> usize {
+    const MAX_BODY_PREFIX: usize = 4 * 1024;
+    let header = String::from_utf8_lossy(header).to_ascii_lowercase();
+    let content_length = header.lines().find_map(|line| {
+        line.strip_prefix("content-length:")
+            .and_then(|value| value.trim().parse::<usize>().ok())
+    });
+    let chunked = header
+        .lines()
+        .any(|line| line.trim() == "transfer-encoding: chunked");
+    match (content_length, chunked) {
+        (Some(length), _) => header_end.saturating_add(length.min(MAX_BODY_PREFIX)),
+        (None, true) => header_end.saturating_add(MAX_BODY_PREFIX),
+        // `Connection: close` makes an unframed body safe to read until EOF.
+        // Capture a bounded prefix anyway: Cloudflare's 1034 marker is in the
+        // HTML body and must not be missed merely because framing is absent.
+        (None, false) => header_end.saturating_add(MAX_BODY_PREFIX),
+    }
 }
 
 fn score_probe_samples(samples: &mut [Duration]) -> ProbeTiming {
@@ -294,7 +364,7 @@ fn score_probe_samples(samples: &mut [Duration]) -> ProbeTiming {
 
 fn probe_request(host: &str, path: &str) -> String {
     format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: edgesteer/0.1\r\nConnection: close\r\n\r\n",
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: edgesteer/0.1\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
         path, host
     )
 }
@@ -313,9 +383,16 @@ fn validate_cloudflare_probe_response(header: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn validate_compatibility_probe_response(header: &[u8]) -> Result<()> {
-    let header = String::from_utf8_lossy(header);
-    let status = header
+fn validate_compatibility_probe_response(response: &[u8]) -> Result<()> {
+    let response = String::from_utf8_lossy(response);
+    let lowered = response.to_ascii_lowercase();
+    if ["error 1034", "error code: 1034", "edge ip restricted"]
+        .iter()
+        .any(|marker| lowered.contains(marker))
+    {
+        bail!("compatibility probe returned a Cloudflare edge-IP restriction");
+    }
+    let status = response
         .lines()
         .next()
         .and_then(|line| line.split_ascii_whitespace().nth(1))
@@ -331,6 +408,7 @@ fn expand_candidates(settings: &OptimizerConfig, ranges: &[IpNet]) -> Result<Vec
     let mut result = Vec::new();
     let mut seen = HashSet::new();
     let mut rng = rand::rng();
+    let excluded = settings.excluded_networks()?;
 
     'candidates: for candidate in &settings.candidates {
         let remaining = settings.max_candidates.saturating_sub(result.len());
@@ -346,6 +424,10 @@ fn expand_candidates(settings: &OptimizerConfig, ranges: &[IpNet]) -> Result<Vec
         };
 
         for address in values {
+            if excluded.iter().any(|network| network.contains(&address)) {
+                debug!(%address, "ignoring explicitly excluded optimizer candidate");
+                continue;
+            }
             if !ranges.iter().any(|range| range.contains(&address)) {
                 debug!(%address, "ignoring optimizer candidate outside the Cloudflare ranges");
                 continue;
@@ -476,6 +558,19 @@ mod tests {
     }
 
     #[test]
+    fn excludes_configured_candidate_ranges() {
+        let mut settings = settings();
+        settings.candidates = vec!["104.16.0.0/30".to_owned()];
+        settings.samples_per_cidr = 4;
+        settings.excluded_candidates = vec!["104.16.0.1".to_owned()];
+        let ranges = vec![IpNet::from_str("104.16.0.0/13").unwrap()];
+
+        let candidates = expand_candidates(&settings, &ranges).expect("candidates expand");
+
+        assert_eq!(candidates, vec![IpAddr::V4(Ipv4Addr::new(104, 16, 0, 2))]);
+    }
+
+    #[test]
     fn validates_cloudflare_probe_header() {
         assert!(
             validate_cloudflare_probe_response(b"HTTP/1.1 200 OK\r\nServer: cloudflare\r\n\r\n")
@@ -490,9 +585,18 @@ mod tests {
     #[test]
     fn trace_probe_uses_get() {
         let settings = OptimizerConfig::default();
-        assert!(
-            probe_request(&settings.test_host, &settings.test_path)
-                .starts_with("GET /cdn-cgi/trace HTTP/1.1\r\n")
+        let request = probe_request(&settings.test_host, &settings.test_path);
+        assert!(request.starts_with("GET /cdn-cgi/trace HTTP/1.1\r\n"));
+        assert!(request.contains("Accept-Encoding: identity\r\n"));
+    }
+
+    #[test]
+    fn compatibility_probe_reads_an_unframed_body_prefix() {
+        let header = b"HTTP/1.1 200 OK\r\n\r\n";
+
+        assert_eq!(
+            compatibility_body_prefix_limit(header, header.len()),
+            header.len() + 4 * 1024
         );
     }
 
@@ -528,6 +632,12 @@ mod tests {
         assert!(
             validate_compatibility_probe_response(
                 b"HTTP/1.1 403 Forbidden\r\nServer: cloudflare\r\n\r\nerror code: 1034"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_compatibility_probe_response(
+                b"HTTP/1.1 200 OK\r\nServer: cloudflare\r\n\r\nPlease enable cookies. Error 1034 Edge IP Restricted"
             )
             .is_err()
         );

@@ -201,11 +201,14 @@ async fn query_layers(
                                 .config
                                 .plugin(plugin_tag)
                                 .expect("validated interceptor references a plugin");
+                            let preferred = runtime.preferred(plugin_tag).map(|preferred| {
+                                state.compatible_preferred(plugin, domain.as_deref(), preferred)
+                            });
                             let changed = plugins::intercept_response(
                                 plugin,
                                 &mut response,
                                 ranges,
-                                runtime.preferred(plugin_tag),
+                                preferred.as_ref(),
                             );
                             if changed {
                                 debug!(layer = %interceptor.tag, plugin = %plugin_tag, "rewrote DNS response through interceptor");

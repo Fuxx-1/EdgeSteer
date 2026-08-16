@@ -13,25 +13,38 @@ Rust 1.85 or newer is required:
 ```sh
 git clone https://github.com/Fuxx-1/EdgeSteer.git
 cd EdgeSteer
-cp config.example.json edgesteer.json
+cp config.example.json "$HOME/edgesteer.json"
 cargo build --locked --release
-./target/release/edgesteer --config edgesteer.json --check-config
+./target/release/edgesteer --check-config
 ```
 
 PowerShell:
 
 ```powershell
-Copy-Item config.example.json edgesteer.json
+Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
 cargo build --locked --release
-.\target\release\edgesteer.exe --config edgesteer.json --check-config
+.\target\release\edgesteer.exe --check-config
 ```
+
+### Iced native UI
+
+On macOS, open the matching `EdgeSteer-*-apple-darwin.dmg` release asset, drag `EdgeSteer.app` to Applications, and open it there. The disk image contains the UI and DNS engine together; port 53 may use a hidden elevated helper from that same bundle, but it does not install an `edgesteer` command-line daemon. If the Settings page detects a legacy root service, remove it there with administrator authorization.
+
+`edgesteer-ui` is built with [Iced](https://github.com/iced-rs/iced), but it is a disposable settings window rather than the resolver host. The lightweight EdgeSteer Agent owns the menu bar, DNS engine, system-DNS state, and login integration; the window sends commands only over an authenticated loopback control channel. It edits the exact JSON used by the Agent, applies the same strict validation before saving, and atomically replaces the file so the watcher does not observe a partial document.
+
+```sh
+cargo build --locked --release --features gui
+./target/release/edgesteer-ui
+```
+
+The service and UI both use the fixed `~/edgesteer.json` path (`%USERPROFILE%\edgesteer.json` on Windows), never another working-directory file. The UI covers the listener, resolver layers and fallbacks, SRS rule sets, Cloudflare preferred-IP plugins, and the optimizer. It opens in Chinese dark mode; Settings provides Chinese/English and Dark/Light pick lists. The menu bar is the primary control surface, while Settings shows the Agent-managed listener, an optional per-user login item, and physical network-service state. On macOS, the packaged App runs as a menu-bar agent with no Dock entry. Closing Settings terminates the Iced process and releases its GPU/Metal resources; the menu-bar item opens a fresh Settings process when needed. Enabling system DNS requests administrator authorization only after the user selects it. Linux and Windows build and use the UI to configure the DNS service; their network managers remain responsible for system DNS registration. Linux menu-bar support requires GTK 3 and an Ayatana AppIndicator runtime.
 
 ### Test on a high port
 
 Set the listener to `127.0.0.1:53535` and start it:
 
 ```sh
-RUST_LOG=info ./target/release/edgesteer --config edgesteer.json
+RUST_LOG=info ./target/release/edgesteer
 ```
 
 From another terminal:
@@ -45,11 +58,11 @@ On Windows:
 
 ```powershell
 $env:RUST_LOG = "info"
-.\target\release\edgesteer.exe --config edgesteer.json
+.\target\release\edgesteer.exe
 Resolve-DnsName www.cloudflare.com -Server 127.0.0.1 -Type A
 ```
 
-`--check-config` validates JSON without binding a port. The default file is `edgesteer.json`; use `--config` for another path.
+`--check-config` validates JSON without binding a port. The service and App always read `~/edgesteer.json`; the macOS disk image does not use a root LaunchDaemon.
 
 ## Use as system DNS
 
@@ -57,16 +70,7 @@ Only consider switching to port 53 after high-port queries work. The default lis
 
 On a DHCP macOS network, `type: "local"` can be used directly as system DNS: after a physical service points at the local listener, EdgeSteer reads that service's current DHCP option 6 DNS. It does not save old DNS addresses; a network change or DHCP renewal is picked up on the next refresh.
 
-Do not write the DHCP DNS addresses back as static settings when disabling it. `networksetup -setdnsservers <service> Empty` removes the EdgeSteer override, making macOS immediately use the interface's current DHCP DNS and continue to follow later lease renewals. A no-snapshot workflow cannot faithfully restore user-entered manual DNS, so the companion helper refuses to replace it.
-
-macOS:
-
-```sh
-# EdgeSteer must already listen on 127.0.0.1:53
-sudo networksetup -setdnsservers "Wi-Fi" 127.0.0.1
-# Immediately return to current DHCP DNS
-sudo networksetup -setdnsservers "Wi-Fi" Empty
-```
+Do not write DHCP DNS addresses back as static settings when disabling it. In `EdgeSteer.app`, use Settings to enable system DNS only after the listener is ready. EdgeSteer records the affected service names, not historical DNS addresses. By default, closing Settings terminates the Iced process while the Agent keeps the resolver running. Choose `Quit EdgeSteer` explicitly from the menu bar to restore only those services to automatic DNS before the Agent stops the resolver and closes any Settings process. If that restoration fails, the App remains open instead of leaving system DNS on loopback. A no-snapshot workflow cannot faithfully restore user-entered manual DNS, so the App refuses to replace it.
 
 `127.0.0.1:53535` is for testing or an explicit front end such as sing-box. Ordinary operating-system DNS settings have no port field, so direct takeover requires EdgeSteer on `127.0.0.1:53`. Linux and Windows still need their network managers to retain or expose the real underlay DNS.
 
@@ -83,14 +87,14 @@ Changes to `listener.address` or `allow_remote` cannot rebind sockets dynamicall
 Use `RUST_LOG` to choose verbosity:
 
 ```sh
-RUST_LOG=debug ./target/release/edgesteer --config edgesteer.json
+RUST_LOG=debug ./target/release/edgesteer
 ```
 
 | Symptom | First checks |
 | --- | --- |
 | `configuration ... rejected` | JSON syntax, unknown fields, duplicate tags, fallback cycles, DoH URL/port, and listener/upstream overlap. |
 | Query returns `SERVFAIL` | Check each layer's timeout, TLS, HTTP status, Content-Type, and endpoint; SERVFAIL is generated only after all network layers fail. |
-| Cloudflare answer is not rewritten | Confirm every relevant address is in the active Cloudflare ranges, the plugin is referenced by an interceptor, and `preferred` has a value or a successful optimizer result. |
+| Cloudflare answer is not rewritten | In strict mode, the first request performs an SNI/Host check. Confirm that `compatibility_hosts` contains a real business hostname and the probe has not failed, then confirm the response addresses are in the active Cloudflare ranges. Returning the untouched answer before validation is the expected safe fallback. |
 | Domain rule does not match | Label mode requires complete labels; only single-question packets use rules; inspect declaration order. For SRS, confirm a `loaded sing-box domain rule set` log entry, then check its tag, URL/path, and supported domain conditions. |
 | Changes appear inactive | Wait for debounce and inspect reload logs. Listener changes require restart. Editors that save through a temporary empty file should be configured for atomic replacement. |
 | DoH fails while direct IP works | Check URL hostname certificates, bootstrap port, system time, and network egress; EdgeSteer does not follow redirects and disables proxies. |
@@ -100,5 +104,5 @@ RUST_LOG=debug ./target/release/edgesteer --config edgesteer.json
 - `local` dynamically reads underlay DNS from system and DHCP network state; verify that startup logs show discovered addresses. A DHCP macOS network can still expose current physical-interface DNS after system DNS changes to the local listener. A manual or IPv6-only setup without DHCP option 6 must retain a visible real upstream and cannot be directly taken over by the no-snapshot system-DNS helper.
 - EdgeSteer's native UDP/TCP sockets do not bypass sing-box TUN or transparent DNS interception. Proxy rules must route discovered underlay DNS `:53` traffic through the intended egress.
 - Do not expose `allow_remote: true` directly to the public Internet; LAN deployments still need firewalling and rate limits.
-- Preferred IP rewriting only applies after Cloudflare-range verification. It does not guarantee the origin, certificate, or application behavior of a third-party site.
+- Preferred IP rewriting applies only after Cloudflare-range and SNI/Host validation. The default validation host, `blog.qoop.top`, validates only its own zone; add every other protected zone that needs preferred-IP rewriting to `compatibility_hosts`. Strict mode does not issue unverified candidates, although Cloudflare changing external routing after a DNS answer is issued is outside local-resolver control.
 - The optimizer makes HTTPS probes to Cloudflare. Include that traffic in egress, proxy, and privacy reviews.

@@ -238,10 +238,7 @@ layer 可选 `match`：
   "tag": "cloudflare-preferred",
   "type": "cloudflare_preferred",
   "rewrite_ttl_secs": 60,
-  "preferred": {
-    "ipv4": "104.16.99.1",
-    "ipv6": "2606:4700::1111"
-  },
+  "preferred": {},
   "optimizer": {
     "enabled": true,
     "interval_secs": 21600,
@@ -253,24 +250,31 @@ layer 可选 `match`：
     "samples_per_cidr": 40,
     "probes_per_candidate": 3,
     "compatibility_hosts": ["your-cf-domain.example"],
-    "max_candidates": 640,
+    "excluded_candidates": ["172.64.228.0/24"],
+    "max_candidates": 1040,
     "candidates": [
+      "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22",
+      "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+      "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22",
+      "198.41.128.0/17", "162.158.0.0/15",
       "104.16.0.0/13", "104.24.0.0/14",
       "172.64.0.0/17", "172.64.128.0/18", "172.64.192.0/19",
       "172.64.224.0/22", "172.64.229.0/24", "172.64.230.0/23",
       "172.64.232.0/21", "172.64.240.0/21", "172.64.248.0/21",
-      "172.67.0.0/16", "103.21.244.0/22", "103.31.4.0/22",
-      "188.114.96.0/20", "172.66.0.0/16"
+      "172.65.0.0/16", "172.66.0.0/16", "172.67.0.0/16",
+      "131.0.72.0/22"
     ]
   }
 }
 ```
 
-候选不是 Cloudflare 官方或 [CloudflareSpeedTest 的 `ip.txt`](https://github.com/XIU2/CloudflareSpeedTest/blob/master/ip.txt) 的全量镜像。默认池包含官方的 `104.16.0.0/13` 与 `104.24.0.0/14`、`172.64.0.0/13` 的公共边缘部分、`172.67.0.0/16`，以及额外的 `103.21.244.0/22`、`103.31.4.0/22`、`188.114.96.0/20`、`172.66.0.0/16`。`172.64.228.0/24` 被明确排除，因为它有已知的 EIV 限制历史。`16` 个 CIDR 各采样 `40` 个地址，`max_candidates: 640` 恰好保证每个配置段均参与本轮。探测前 EdgeSteer 仍会按 Cloudflare 官方实时网段校验，因此过期或非 Cloudflare 地址不会成为优选 IP。静态 `preferred.ipv4`、`preferred.ipv6` 也必须位于当前 Cloudflare 网段。
+候选池覆盖 [CloudflareSpeedTest 的 `ip.txt`](https://github.com/XIU2/CloudflareSpeedTest/blob/master/ip.txt) 中可安全交集到 Cloudflare 官方 IPv4 清单的 26 段。`104.16.0.0/12` 不会直接复制，因为其 `104.28.0.0/14` 部分不在 Cloudflare 当前公开网段中；因此配置只保留精确的 `104.16.0.0/13` 与 `104.24.0.0/14`。`excluded_candidates` 会在采样后、官方网段校验前再次过滤地址；默认显式排除已有 EIV 限制历史的 `172.64.228.0/24`。26 个 CIDR 各采样 40 个地址，`max_candidates: 1040` 保证每段都参与本轮。官方网段只说明地址归属，不能证明一个 IP 对所有 Cloudflare zone 都可用。
 
-`compatibility_hosts` 是针对实际业务域名的第二道筛选。将 `your-cf-domain.example` 替换为至少一个由 Cloudflare 代理的真实域名；每个候选在测速通过后，会用该域名的 SNI 和 Host 再请求一次。只有返回 2xx 或 3xx 的候选才会保留，因此 `403 error code: 1034`、WAF 拒绝和其他不兼容的边缘 IP 都会被淘汰。空数组表示不做此额外校验，不应在遇到 1034 的站点上使用。
+启用 optimizer 时，`compatibility_hosts` 至少要有一个真实、由 Cloudflare 代理的业务域名。每个候选先通过测速，再针对每个兼容域名连续执行 `probes_per_candidate` 次 SNI/Host 探测；只有 2xx/3xx 且响应中没有 `Error 1034`、`Edge IP Restricted` 等拒绝标识时才可被选择。默认使用 `blog.qoop.top` 作为验证主机；它只证明自身 zone，其他需要优选改写的业务域名应按需加入数组。
 
-optimizer 从 IP 或 CIDR 候选中采样；每个候选连续执行 `probes_per_candidate` 次完整 TCP、TLS 与 HTTP 探测，任一次失败即淘汰，HTTP 必须返回 2xx 且 `server: cloudflare`。它按“中位延迟 + 一半尾延迟”排序，避免单次偶发快或严重抖动的 IP 胜出。IPv4/IPv6 分开选择；某一地址族本轮没有合格候选时保留上一次成功值。
+这会开启严格模式：启动时忽略静态 `preferred`，候选轮次没有合格地址或探测失败时清空旧值并返回上游原始 Cloudflare DNS 结果。实际 DNS 查询还会以该查询域名再次执行 SNI/Host 验证；首次、验证失败、并发验证中或验证超过 `rewrite_ttl_secs` 的地址均不改写。缓存有效期不超过改写 DNS 的 TTL，因此 EdgeSteer 不会主动向客户端下发未通过当前域名验证的优选 IP。Cloudflare 可在 DNS 答案已发出后改变外部路由，任何客户端缓存窗口以外的行为不由本地程序控制。
+
+optimizer 从 IP 或 CIDR 候选中采样；每个候选连续执行 `probes_per_candidate` 次完整 TCP、TLS 与 HTTP 探测，任一次失败即淘汰，HTTP 必须返回 2xx 且 `server: cloudflare`。它按“中位延迟 + 一半尾延迟”排序，避免单次偶发快或严重抖动的 IP 胜出。IPv4/IPv6 分开选择；严格模式下某一地址族本轮没有合格候选不会保留上一次成功值。
 
 拦截器只在相关地址全部属于 Cloudflare 时改写。混合地址、非 Cloudflare 地址、没有优选值或没有可改写记录都会原样返回；实际改写后 TTL 设为 `rewrite_ttl_secs`，并清理 DNSSEC 认证状态。
 
