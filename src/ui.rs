@@ -52,6 +52,24 @@ pub fn run(options: UiOptions) -> iced::Result {
     EdgeSteerUi::run(settings)
 }
 
+#[cfg(target_os = "macos")]
+fn configure_activation_policy_command() -> Command<Message> {
+    // Iced 0.12 does not synthesize an initial `Opened` event for its
+    // single-window application shell. Delay until winit has finished
+    // initializing AppKit, then apply the accessory policy exactly once.
+    Command::perform(
+        async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        },
+        |_| Message::WindowOpened,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn configure_activation_policy_command() -> Command<Message> {
+    Command::none()
+}
+
 fn platform_ui_font() -> Font {
     #[cfg(target_os = "macos")]
     {
@@ -852,7 +870,8 @@ enum Message {
     AgentActionFinished(Result<AgentResponse, String>),
     AgentStatusChecked(Result<AgentStatus, String>),
     AgentConfigurationRefreshed(Result<AgentResponse, String>),
-    UiTick,
+    WindowOpened,
+    NoticeExpired(Instant),
     WindowCloseRequested,
     QuitAgentFinished(Result<AgentResponse, String>),
 }
@@ -905,6 +924,10 @@ impl Notice {
 
     fn expired(&self) -> bool {
         Instant::now() >= self.expires_at
+    }
+
+    fn remaining(&self) -> Duration {
+        self.expires_at.saturating_duration_since(Instant::now())
     }
 }
 
@@ -1073,6 +1096,7 @@ impl Application for EdgeSteerUi {
                     async move { agent_for_status.status() },
                     Message::AgentStatusChecked,
                 ),
+                configure_activation_policy_command(),
             ]),
         )
     }
@@ -1301,7 +1325,7 @@ impl Application for EdgeSteerUi {
                 }
                 return inspect_integration(self.document.listener_address());
             }
-            Message::UiTick => {
+            Message::WindowOpened => {
                 #[cfg(target_os = "macos")]
                 if !self.macos_activation_policy_configured {
                     // Iced 0.12 creates winit with its default Regular policy
@@ -1311,7 +1335,13 @@ impl Application for EdgeSteerUi {
                     configure_menu_bar_activation_policy();
                     self.macos_activation_policy_configured = true;
                 }
-                if self.notice.as_ref().is_some_and(Notice::expired) {
+            }
+            Message::NoticeExpired(expires_at) => {
+                if self
+                    .notice
+                    .as_ref()
+                    .is_some_and(|notice| notice.expires_at == expires_at && notice.expired())
+                {
                     self.notice = None;
                 }
             }
@@ -1345,10 +1375,16 @@ impl Application for EdgeSteerUi {
     }
 
     fn subscription(&self) -> iced::Subscription<Self::Message> {
-        iced::Subscription::batch([
-            iced::event::listen_with(application_lifecycle_event),
-            iced::time::every(Duration::from_millis(250)).map(|_| Message::UiTick),
-        ])
+        let mut subscriptions = vec![iced::event::listen_with(application_lifecycle_event)];
+        if let Some(notice) = &self.notice {
+            let delay = notice.remaining().max(Duration::from_millis(1));
+            subscriptions.push(
+                iced::time::every(delay)
+                    .with(notice.expires_at)
+                    .map(|(expires_at, _)| Message::NoticeExpired(expires_at)),
+            );
+        }
+        iced::Subscription::batch(subscriptions)
     }
 
     fn view(&self) -> Element<Self::Message> {
@@ -1576,8 +1612,13 @@ fn application_lifecycle_event(
     event: iced::Event,
     _status: iced::event::Status,
 ) -> Option<Message> {
-    matches!(event, iced::Event::Window(_, window::Event::CloseRequested))
-        .then_some(Message::WindowCloseRequested)
+    match event {
+        iced::Event::Window(_, window::Event::Opened { .. }) => Some(Message::WindowOpened),
+        iced::Event::Window(_, window::Event::CloseRequested) => {
+            Some(Message::WindowCloseRequested)
+        }
+        _ => None,
+    }
 }
 
 fn inspect_integration(listener: std::net::SocketAddr) -> Command<Message> {
