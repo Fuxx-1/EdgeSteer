@@ -1,8 +1,11 @@
 use std::{
-    net::{IpAddr, SocketAddr, TcpStream},
+    net::{SocketAddr, TcpStream},
     path::Path,
     time::Duration,
 };
+
+#[cfg(any(target_os = "macos", test))]
+use std::net::IpAddr;
 
 #[cfg(target_os = "macos")]
 use std::{fs, path::PathBuf, process::Command};
@@ -73,6 +76,7 @@ impl SystemDnsService {
         }
     }
 
+    #[cfg(any(target_os = "macos", test))]
     fn uses_dns_server(&self, server: &str) -> bool {
         self.servers.len() == 1 && self.servers[0] == server
     }

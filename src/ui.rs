@@ -21,12 +21,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::{
-    agent::{
-        AgentClient, AgentCommand, AgentResponse, AgentStatus, configure_menu_bar_activation_policy,
-    },
+    agent::{AgentClient, AgentCommand, AgentResponse, AgentStatus},
     config::{self, FileConfig},
     integration::{self, IntegrationStatus},
 };
+
+#[cfg(target_os = "macos")]
+use crate::agent::configure_menu_bar_activation_policy;
 
 const DEFAULT_CONFIG: &str = include_str!("../config.example.json");
 const APP_LOGO: &[u8] = include_bytes!("../assets/edgesteer-logo.png");
@@ -893,6 +894,7 @@ struct EdgeSteerUi {
     pending_action: Option<PendingAction>,
     registration_action_in_progress: bool,
     quit_in_progress: bool,
+    #[cfg(target_os = "macos")]
     macos_activation_policy_configured: bool,
 }
 
@@ -1088,6 +1090,7 @@ impl Application for EdgeSteerUi {
                 pending_action: None,
                 registration_action_in_progress: false,
                 quit_in_progress: false,
+                #[cfg(target_os = "macos")]
                 macos_activation_policy_configured: false,
             },
             Command::batch([

@@ -232,6 +232,7 @@ fn run_agent(
         let _ = agent.open_ui();
     }
     agent.refresh_status();
+    #[cfg(target_os = "macos")]
     let mut activation_policy_configured = false;
 
     event_loop
