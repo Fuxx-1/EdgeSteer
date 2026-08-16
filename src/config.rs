@@ -185,10 +185,54 @@ const fn default_request_timeout_ms() -> u64 {
 pub fn load_config(path: &Path) -> Result<FileConfig> {
     let contents = fs::read_to_string(path)
         .with_context(|| format!("read configuration file {}", path.display()))?;
-    let config: FileConfig = serde_json::from_str(&contents)
-        .with_context(|| format!("parse JSON configuration file {}", path.display()))?;
+    parse_config_text(&contents)
+        .with_context(|| format!("parse JSON configuration file {}", path.display()))
+}
+
+/// Parse and validate a JSON configuration without reading a path. This is
+/// shared by the native UI so it has the exact same validation boundary as
+/// the DNS service.
+pub fn parse_config_text(contents: &str) -> Result<FileConfig> {
+    let config: FileConfig = serde_json::from_str(contents).context("parse JSON configuration")?;
     config.validate()?;
     Ok(config)
+}
+
+/// Replace a configuration file only after it passes the normal parser and
+/// validator. Writing a sibling file and renaming it keeps file-watch reloads
+/// from observing a partially written JSON document.
+pub fn write_config_atomically(path: &Path, contents: &str) -> Result<()> {
+    parse_config_text(contents).context("validate configuration before saving")?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        bail!(
+            "configuration directory {} does not exist",
+            parent.display()
+        );
+    }
+    let file_name = path
+        .file_name()
+        .context("configuration path has no file name")?;
+    let mut temporary_name = file_name.to_os_string();
+    temporary_name.push(format!(".{}.tmp", std::process::id()));
+    let temporary_path = parent.join(temporary_name);
+
+    fs::write(&temporary_path, contents)
+        .with_context(|| format!("write temporary configuration {}", temporary_path.display()))?;
+    if let Err(error) = fs::rename(&temporary_path, path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error).with_context(|| {
+            format!(
+                "replace configuration {} with {}",
+                path.display(),
+                temporary_path.display()
+            )
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -688,6 +732,9 @@ pub struct OptimizerConfig {
     pub samples_per_cidr: usize,
     pub probes_per_candidate: usize,
     pub compatibility_hosts: Vec<String>,
+    /// Candidate IPs/CIDRs that must never be selected. This is useful for
+    /// known EIV-restricted Cloudflare subnets when a wider CIDR is sampled.
+    pub excluded_candidates: Vec<String>,
     pub max_candidates: usize,
     pub candidates: Vec<String>,
 }
@@ -705,6 +752,7 @@ impl Default for OptimizerConfig {
             samples_per_cidr: 1,
             probes_per_candidate: 3,
             compatibility_hosts: Vec::new(),
+            excluded_candidates: Vec::new(),
             max_candidates: 128,
             candidates: Vec::new(),
         }
@@ -712,12 +760,40 @@ impl Default for OptimizerConfig {
 }
 
 impl OptimizerConfig {
+    /// A compatibility host makes rewriting opt-in: an address must be
+    /// actively proven compatible before EdgeSteer is allowed to hand it out.
+    pub fn requires_compatibility_gate(&self) -> bool {
+        self.enabled && !self.compatibility_hosts.is_empty()
+    }
+
+    pub fn excluded_networks(&self) -> Result<Vec<ipnet::IpNet>> {
+        self.excluded_candidates
+            .iter()
+            .map(|candidate| {
+                if let Ok(address) = candidate.parse::<IpAddr>() {
+                    Ok(ipnet::IpNet::from(address))
+                } else {
+                    candidate.parse::<ipnet::IpNet>().with_context(|| {
+                        format!(
+                            "invalid optimizer excluded candidate {candidate:?}; use an IP address or CIDR"
+                        )
+                    })
+                }
+            })
+            .collect()
+    }
+
     pub fn validate(&self) -> Result<()> {
         if !self.enabled {
             return Ok(());
         }
         if self.candidates.is_empty() {
             bail!("optimizer.candidates cannot be empty when optimizer.enabled = true");
+        }
+        if self.compatibility_hosts.is_empty() {
+            bail!(
+                "optimizer.compatibility_hosts cannot be empty when optimizer.enabled = true; strict host validation is required to prevent Cloudflare 1034"
+            );
         }
         if self.interval_secs == 0 || self.timeout_ms == 0 {
             bail!("optimizer.interval_secs and optimizer.timeout_ms must be greater than zero");
@@ -756,13 +832,19 @@ impl OptimizerConfig {
                 bail!("duplicate optimizer compatibility host {normalized:?}");
             }
         }
-        for candidate in &self.candidates {
-            if candidate.parse::<IpAddr>().is_err() && candidate.parse::<ipnet::IpNet>().is_err() {
-                bail!("invalid optimizer candidate {candidate:?}; use an IP address or CIDR");
-            }
-        }
+        validate_optimizer_candidates(&self.candidates, "candidate")?;
+        self.excluded_networks()?;
         Ok(())
     }
+}
+
+fn validate_optimizer_candidates(candidates: &[String], label: &str) -> Result<()> {
+    for candidate in candidates {
+        if candidate.parse::<IpAddr>().is_err() && candidate.parse::<ipnet::IpNet>().is_err() {
+            bail!("invalid optimizer {label} {candidate:?}; use an IP address or CIDR");
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -992,9 +1074,10 @@ mod tests {
             .plugin("cloudflare-preferred")
             .expect("example plugin exists")
             .optimizer;
-        assert_eq!(optimizer.candidates.len(), 16);
+        assert_eq!(optimizer.candidates.len(), 26);
         assert_eq!(optimizer.samples_per_cidr, 40);
-        assert_eq!(optimizer.max_candidates, 640);
+        assert_eq!(optimizer.max_candidates, 1040);
+        assert_eq!(optimizer.excluded_candidates, ["172.64.228.0/24"]);
     }
 
     #[test]
@@ -1003,7 +1086,29 @@ mod tests {
         let optimizer = &mut config.plugins[0].optimizer;
         optimizer.enabled = true;
         optimizer.candidates = vec!["104.16.0.0/13".to_owned()];
-        optimizer.compatibility_hosts = vec![" shu26.cfd ".to_owned()];
+        optimizer.compatibility_hosts = vec![" blog.qoop.top ".to_owned()];
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_enabled_optimizer_without_compatibility_hosts() {
+        let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        let optimizer = &mut config.plugins[0].optimizer;
+        optimizer.enabled = true;
+        optimizer.candidates = vec!["104.16.0.0/13".to_owned()];
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_excluded_candidate() {
+        let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        let optimizer = &mut config.plugins[0].optimizer;
+        optimizer.enabled = true;
+        optimizer.candidates = vec!["104.16.0.0/13".to_owned()];
+        optimizer.compatibility_hosts = vec!["blog.qoop.top".to_owned()];
+        optimizer.excluded_candidates = vec!["not-an-address".to_owned()];
 
         assert!(config.validate().is_err());
     }

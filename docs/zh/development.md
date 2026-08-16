@@ -16,6 +16,8 @@ EdgeSteer 是 Rust 2024 项目，MSRV 为 Rust 1.85。文档、配置和源码�
 | `src/ranges.rs` | Cloudflare 网段加载和刷新。 |
 | `src/state.rs` | 运行时快照、DoH client 缓存与并发控制。 |
 | `src/watcher.rs` | 配置热重载。 |
+| `src/agent.rs` | 常驻菜单栏 Agent、DNS 引擎所有权和带认证的本机控制通道。 |
+| `src/ui.rs`、`src/tray.rs` | 可释放的 Iced 配置进程和原生菜单栏呈现。 |
 | `src/main.rs`, `src/lib.rs` | CLI、日志和进程生命周期。 |
 | `config.example.json` | 可直接复制修改的配置样例。 |
 | `.github/workflows/` | CI 与 tag release。 |
@@ -34,7 +36,8 @@ cargo build --locked --release
 只校验配置：
 
 ```sh
-cargo run --release -- --config config.example.json --check-config
+cp config.example.json "$HOME/edgesteer.json"
+cargo run --release -- --check-config
 ```
 
 测试不依赖 CI 访问 Cloudflare 或 Tencent。网络集成测试使用本地 fake UDP endpoint，其他 transport 的关键约束通过配置校验和纯函数单元测试覆盖，重点验证响应关联校验、fallback 顺序、关键词、SRS 域名规则、动态 local 缓存、拦截器改写和热重载。
@@ -59,7 +62,7 @@ cargo run --release -- --config config.example.json --check-config
 - `v1.2.3-alpha.1`、`v1.2.3-beta.1`、`v1.2.3-rc.1` 等带连字符的版本创建 pre-release。
 - 不符合语义版本的 tag 会在构建前失败。
 
-发布流程会为 Linux x86_64、macOS Intel、macOS Apple Silicon 和 Windows x86_64 构建归档，并在 release 中上传二进制、README、示例配置和 LICENSE。
+发布流程会为 Linux x86_64、macOS Intel、macOS Apple Silicon 和 Windows x86_64 构建产物。Linux、Windows 发布包含 CLI 和 UI 的归档；macOS 发布按架构区分的未签名 `.dmg`，内含可拖到“应用程序”的 `EdgeSteer.app`。该 App bundle 管理内置 DNS 引擎（53 端口需要时使用隐藏授权 helper），不包含独立的命令行服务。
 
 示例：
 

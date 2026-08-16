@@ -1,6 +1,6 @@
 [package]
 name = "edgesteer"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Adaptive DNS steering for preferred Cloudflare edge IPs"
@@ -10,6 +10,15 @@ repository = "https://github.com/Fuxx-1/EdgeSteer"
 homepage = "https://github.com/Fuxx-1/EdgeSteer"
 keywords = ["dns", "cloudflare", "cdn", "doh", "dot"]
 categories = ["command-line-utilities", "network-programming"]
+
+[features]
+default = []
+gui = ["dep:iced", "dep:iced_aw", "dep:png", "dep:tray-icon", "dep:winit"]
+
+[[bin]]
+name = "edgesteer-ui"
+path = "src/bin/edgesteer-ui.rs"
+required-features = ["gui"]
 
 [dependencies]
 anyhow = "1.0"
@@ -30,9 +39,21 @@ tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webpki-roots = "0.26"
+iced = { version = "0.12.1", optional = true, features = ["image", "tokio"] }
+iced_aw = { version = "0.9.3", default-features = false, features = ["floating_element", "modal"], optional = true }
+png = { version = "0.18", optional = true }
+winit = { version = "0.29.15", optional = true }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = { version = "0.24.1", default-features = false, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.24.1", default-features = false, features = ["gtk"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSResponder", "NSRunningApplication"] }
 system-configuration = "0.7"
 
 [target.'cfg(windows)'.dependencies]

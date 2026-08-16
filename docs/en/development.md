@@ -16,6 +16,8 @@ EdgeSteer is a Rust 2024 project with Rust 1.85 as its MSRV. Source, configurati
 | `src/ranges.rs` | Cloudflare range loading and refresh. |
 | `src/state.rs` | Runtime snapshots, DoH client cache, and concurrency control. |
 | `src/watcher.rs` | Configuration hot reload. |
+| `src/agent.rs` | Resident menu-bar Agent, DNS-engine ownership, and authenticated loopback control. |
+| `src/ui.rs`, `src/tray.rs` | Disposable Iced settings process and native menu-bar presentation. |
 | `src/main.rs`, `src/lib.rs` | CLI, logging, and process lifecycle. |
 | `config.example.json` | Copyable configuration example. |
 | `.github/workflows/` | CI and tag-triggered releases. |
@@ -34,7 +36,8 @@ cargo build --locked --release
 Validate only the configuration:
 
 ```sh
-cargo run --release -- --config config.example.json --check-config
+cp config.example.json "$HOME/edgesteer.json"
+cargo run --release -- --check-config
 ```
 
 Tests do not depend on CI access to Cloudflare or Tencent. Network integration tests use a local fake UDP endpoint; key constraints for other transports are covered by configuration validation and pure unit tests, including response correlation, fallback order, keywords, SRS domain rules, dynamic local caching, interceptor rewriting, and reloads.
@@ -59,7 +62,7 @@ Tests do not depend on CI access to Cloudflare or Tencent. Network integration t
 - `v1.2.3-alpha.1`, `v1.2.3-beta.1`, and `v1.2.3-rc.1` create pre-releases.
 - Invalid semantic-version tags fail before building.
 
-The workflow builds Linux x86_64, Intel macOS, Apple Silicon macOS, and Windows x86_64 archives. Each release includes the binary, README, example configuration, and LICENSE.
+The workflow builds Linux x86_64, Intel macOS, Apple Silicon macOS, and Windows x86_64 assets. Linux and Windows publish archives containing the CLI and UI binaries. macOS publishes architecture-specific unsigned `.dmg` images containing an `EdgeSteer.app` that can be dragged to Applications; the App bundle manages the DNS engine (using a hidden elevated helper for port 53 when needed) and contains no standalone command-line service.
 
 Example:
 

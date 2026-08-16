@@ -40,25 +40,25 @@ The built-in optimizer probes Cloudflare addresses with TCP, TLS, and HTTP. A ca
 
 ## Quick start
 
-Rust 1.85 or newer is required. Release archives target Linux x86_64, Intel macOS, Apple Silicon macOS, and Windows x86_64.
+Rust 1.85 or newer is required. Release assets target Linux x86_64, Intel macOS, Apple Silicon macOS, and Windows x86_64. macOS assets are architecture-specific `.dmg` disk images containing `EdgeSteer.app`.
 
 ```sh
 git clone https://github.com/Fuxx-1/EdgeSteer.git
 cd EdgeSteer
-cp config.example.json edgesteer.json
+cp config.example.json "$HOME/edgesteer.json"
 cargo build --locked --release
-./target/release/edgesteer --config edgesteer.json --check-config
-RUST_LOG=info ./target/release/edgesteer --config edgesteer.json
+./target/release/edgesteer --check-config
+RUST_LOG=info ./target/release/edgesteer
 ```
 
 PowerShell:
 
 ```powershell
-Copy-Item config.example.json edgesteer.json
+Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
 cargo build --locked --release
-.\target\release\edgesteer.exe --config edgesteer.json --check-config
+.\target\release\edgesteer.exe --check-config
 $env:RUST_LOG = "info"
-.\target\release\edgesteer.exe --config edgesteer.json
+.\target\release\edgesteer.exe
 ```
 
 Use a high port for the first test:
@@ -74,6 +74,10 @@ dig @127.0.0.1 -p 53535 www.cloudflare.com A +short
 ```
 
 See the [configuration guide](configuration.md) for all fields, DoH/DoT constraints, keyword and sing-box SRS domain-rule matching, and plugin examples.
+
+On macOS, open the matching `EdgeSteer-*-apple-darwin.dmg` and drag `EdgeSteer.app` to Applications. The App bundle manages the DNS engine. When port 53 is required, the App starts a hidden administrator-authorized helper from the same bundle, rather than installing a standalone command-line DNS service or root LaunchDaemon. The Settings page can remove a detected legacy root service after administrator authorization. The service and native UI always use `~/edgesteer.json` (`%USERPROFILE%\edgesteer.json` on Windows). The native UI opens in Chinese dark mode, uses `PingFang SC` for CJK text on macOS, and provides language and Dark/Light pick lists in Settings. The menu bar is the primary control surface for the engine, system DNS, login start, and explicit exit.
+
+The Settings page can open the installed App at login through a user LaunchAgent. The lightweight EdgeSteer Agent owns the menu bar, resolver, system-DNS state, and login integration; the Iced settings window is a separate, disposable process connected only through a loopback control channel. When it enables system DNS, it records only the automatic-DNS physical services that EdgeSteer took over, never a DNS-address snapshot. The macOS App runs as a menu-bar agent with no Dock entry. Closing the settings window terminates its Iced/Metal renderer while the Agent and DNS engine remain available from the menu bar. Choosing `Quit EdgeSteer` explicitly restores those recorded services to automatic DHCP DNS before the Agent stops the engine and closes any settings window; a restoration failure keeps the App open. Explicit manual DNS is never overwritten. On Linux, the menu bar requires GTK 3 and an Ayatana AppIndicator runtime. An enabled optimizer requires real `compatibility_hosts`; strict mode validates both candidates and the actual query hostname with SNI/Host before issuing a rewritten address. An unverified address falls back to the original upstream answer rather than risking Error 1034.
 
 ## Documentation
 

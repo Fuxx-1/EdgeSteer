@@ -41,6 +41,8 @@ Every layer is a node and its `fallback` points to the next node. The JSON descr
 | `src/rule_sets.rs` | Native domain-rule loading for sing-box SRS v1–v5, with local/remote refresh and last-good retention. |
 | `src/state.rs` | `ArcSwap` runtime snapshots, rule sets, Cloudflare ranges, and the DoH client cache. |
 | `src/watcher.rs` | Configuration watcher with approximately 250 ms debounce and atomic replacement after validation. |
+| `src/agent.rs` | Lightweight resident Agent for the menu bar, DNS-engine lifecycle, system DNS, login integration, and loopback control channel. It does not load Iced or a GPU renderer. |
+| `src/ui.rs` | Separate Iced settings window. Closing it exits that process and releases GPU/Metal resources while the Agent and DNS engine continue in the menu bar. |
 
 ## Request lifecycle
 
@@ -63,13 +65,21 @@ An interceptor does not synthesize a complete DNS answer. It can only change all
 
 Detection uses numeric addresses in the response and IP hints in HTTPS/SVCB records. They must belong to the active Cloudflare ranges. The ranges start from a built-in list and are refreshed from the official lists; a failed refresh never clears the active list.
 
-The optimizer samples configured IP/CIDR candidates. Every candidate runs `probes_per_candidate` consecutive TCP, TLS, and HTTP probes using `test_host` and `test_path`; any failed attempt rejects the candidate. Successful candidates are ranked by median latency plus half of their tail latency, favoring low-latency, stable edges over a one-off fast but jittery response. The response must be 2xx with `server: cloudflare`. When `compatibility_hosts` is configured, a candidate must also return 2xx or 3xx with each business hostname as its SNI and Host header; this rejects Cloudflare 1034 EIV-restricted and otherwise incompatible edges. IPv4 and IPv6 are selected independently, and a failed family retains its last good value.
+The optimizer samples configured IP/CIDR candidates, filters `excluded_candidates`, and then intersects them with the active official Cloudflare ranges. Every candidate runs `probes_per_candidate` consecutive TCP, TLS, and HTTP probes using `test_host` and `test_path`; any failed attempt rejects the candidate. Successful candidates are ranked by median latency plus half of their tail latency, favoring low-latency, stable edges over a one-off fast but jittery response. The response must be 2xx with `server: cloudflare`.
+
+An enabled optimizer requires at least one `compatibility_hosts` entry. A candidate must also pass repeated SNI/Host requests for every business host, returning 2xx/3xx with no 1034/EIV refusal marker before it can be selected. This strict mode ignores static preferred addresses and clears an old result after an empty or failed round. Every DNS hostname that would be rewritten receives the same short-lived SNI/Host verification; pending, failed, or expired validation returns the upstream answer. A preferred address therefore cannot cross into an unverified Cloudflare zone, and the cache lifetime is no longer than the rewritten DNS TTL.
 
 ## Reload and consistency
 
 The watcher fully parses and validates new JSON before replacing the runtime snapshot. In-flight requests keep their old snapshot and later requests see the new one, so configuration and optimizer state cannot be mixed across generations. The rule-set worker immediately reconciles new definitions and atomically publishes a completed replacement. Layer changes clear cached DoH clients; when a `local` layer exists, its refresh loop rereads system DNS at the new shortest `refresh_secs` interval.
 
 Listener address and `allow_remote` changes cannot rebind sockets dynamically. The file can be accepted, but the process keeps the existing listener and logs that a restart is required; other valid settings still reload.
+
+## App lifecycle
+
+The packaged App starts the EdgeSteer Agent first. The Agent uses a native event loop and a menu-bar icon while it owns the DNS runtime; the Iced settings window runs as a separate child process only at first launch or when opened from the menu bar. Its control channel binds only `127.0.0.1` and requires the random token stored in the Agent state record, so the UI never owns the resolver directly.
+
+Closing Settings normally exits the UI process instead of hiding its wgpu/Metal renderer. DNS, the menu bar, and any managed system DNS remain available while the complete GUI allocation is released. Opening Settings from the menu bar creates a fresh UI process. When the user explicitly chooses `Quit EdgeSteer`, the Agent restores the system DNS it owns first, stops the resolver, then closes any remaining settings window.
 
 ## Security boundaries
 

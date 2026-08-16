@@ -238,10 +238,7 @@ The available plugin type is `cloudflare_preferred`. It is referenced only by an
   "tag": "cloudflare-preferred",
   "type": "cloudflare_preferred",
   "rewrite_ttl_secs": 60,
-  "preferred": {
-    "ipv4": "104.16.99.1",
-    "ipv6": "2606:4700::1111"
-  },
+  "preferred": {},
   "optimizer": {
     "enabled": true,
     "interval_secs": 21600,
@@ -253,24 +250,31 @@ The available plugin type is `cloudflare_preferred`. It is referenced only by an
     "samples_per_cidr": 40,
     "probes_per_candidate": 3,
     "compatibility_hosts": ["your-cf-domain.example"],
-    "max_candidates": 640,
+    "excluded_candidates": ["172.64.228.0/24"],
+    "max_candidates": 1040,
     "candidates": [
+      "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22",
+      "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+      "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22",
+      "198.41.128.0/17", "162.158.0.0/15",
       "104.16.0.0/13", "104.24.0.0/14",
       "172.64.0.0/17", "172.64.128.0/18", "172.64.192.0/19",
       "172.64.224.0/22", "172.64.229.0/24", "172.64.230.0/23",
       "172.64.232.0/21", "172.64.240.0/21", "172.64.248.0/21",
-      "172.67.0.0/16", "103.21.244.0/22", "103.31.4.0/22",
-      "188.114.96.0/20", "172.66.0.0/16"
+      "172.65.0.0/16", "172.66.0.0/16", "172.67.0.0/16",
+      "131.0.72.0/22"
     ]
   }
 }
 ```
 
-The candidate list is intentionally not a full mirror of Cloudflare's official ranges or [CloudflareSpeedTest's `ip.txt`](https://github.com/XIU2/CloudflareSpeedTest/blob/master/ip.txt). The default pool includes the official `104.16.0.0/13` and `104.24.0.0/14`, the public edge parts of `172.64.0.0/13`, `172.67.0.0/16`, plus `103.21.244.0/22`, `103.31.4.0/22`, `188.114.96.0/20`, and `172.66.0.0/16`. `172.64.228.0/24` is expressly excluded because it has a known history of EIV restrictions. `16` CIDRs sampled at `40` addresses each and `max_candidates: 640` ensure every configured range participates in a round. Before probing, EdgeSteer still intersects every candidate with Cloudflare's live official ranges, so stale or non-Cloudflare addresses cannot become preferred IPs. Static `preferred.ipv4` and `preferred.ipv6` must also be inside the active Cloudflare ranges.
+The candidate pool covers the 26 IPv4 CIDRs from [CloudflareSpeedTest's `ip.txt`](https://github.com/XIU2/CloudflareSpeedTest/blob/master/ip.txt) that safely intersect Cloudflare's published list. It does not copy `104.16.0.0/12`: its `104.28.0.0/14` part is absent from Cloudflare's current official ranges, so the configuration retains only precise `104.16.0.0/13` and `104.24.0.0/14` entries. `excluded_candidates` filters after sampling and before the official-range guard; the default explicitly excludes `172.64.228.0/24`, which has a history of EIV restrictions. Twenty-six CIDRs sampled at 40 addresses each with `max_candidates: 1040` put every configured range in each round. Official ownership proves only address identity, not compatibility with every Cloudflare zone.
 
-`compatibility_hosts` adds a second, business-domain-specific gate. Replace `your-cf-domain.example` with at least one real Cloudflare-proxied hostname. After a candidate passes the speed probes, EdgeSteer connects to it with that hostname as its SNI and Host header. The candidate is kept only for a 2xx or 3xx response, rejecting `403 error code: 1034`, WAF denials, and other incompatible edges. An empty list disables this extra validation and should not be used for a site that has encountered 1034.
+When the optimizer is enabled, `compatibility_hosts` must contain at least one real Cloudflare-proxied business hostname. Each candidate first passes its speed probes, then performs `probes_per_candidate` consecutive SNI/Host probes for every compatibility host. It is selected only for a 2xx/3xx response with no `Error 1034`, `Edge IP Restricted`, or equivalent refusal marker. The default validation host is `blog.qoop.top`; it proves only its own zone, so add each other business hostname that needs preferred-IP rewriting.
 
-The optimizer samples IP or CIDR candidates; it runs `probes_per_candidate` full TCP, TLS, and HTTP probes for every candidate, rejects it if any attempt fails, and requires a 2xx response with `server: cloudflare`. It ranks successful candidates by median latency plus half of their tail latency, preventing a single lucky or highly jittery result from winning. IPv4 and IPv6 are selected independently; a family without a qualified candidate retains its previous successful value.
+This enables strict mode: startup ignores static `preferred`, and a failed or empty probe round clears the old value and returns the upstream Cloudflare DNS result. Each actual DNS hostname also receives a fresh SNI/Host check before its answer is rewritten; first use, failure, an in-flight check, or validation older than `rewrite_ttl_secs` returns the original answer. The cache cannot outlive the rewritten DNS TTL, so EdgeSteer does not actively issue an unverified preferred IP for the query hostname. Cloudflare can change external routing after a DNS answer has been issued, which is outside a local resolver's control.
+
+The optimizer samples IP or CIDR candidates; it runs `probes_per_candidate` full TCP, TLS, and HTTP probes for every candidate, rejects it if any attempt fails, and requires a 2xx response with `server: cloudflare`. It ranks successful candidates by median latency plus half of their tail latency, preventing a single lucky or highly jittery result from winning. IPv4 and IPv6 are selected independently; in strict mode, a family without a qualified candidate does not retain its previous value.
 
 The interceptor rewrites only when all relevant addresses are Cloudflare addresses. Mixed answers, non-Cloudflare addresses, missing preferred values, and responses without rewriteable records are returned unchanged. A rewrite sets TTL to `rewrite_ttl_secs` and clears DNSSEC authentication state.
 
