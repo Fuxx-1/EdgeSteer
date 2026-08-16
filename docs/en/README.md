@@ -40,7 +40,7 @@ The built-in optimizer probes Cloudflare addresses with TCP, TLS, and HTTP. A ca
 
 ## Quick start
 
-Rust 1.85 or newer is required. Release assets target Linux x86_64, Intel macOS, Apple Silicon macOS, and Windows x86_64. macOS assets are architecture-specific `.dmg` disk images containing `EdgeSteer.app`.
+Rust 1.85 or newer is required. Release assets target x86_64 and ARM64 on Linux, macOS, and Windows. macOS assets are architecture-specific `.dmg` disk images containing `EdgeSteer.app`.
 
 ```sh
 git clone https://github.com/Fuxx-1/EdgeSteer.git

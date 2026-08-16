@@ -52,7 +52,7 @@ Tests do not depend on CI access to Cloudflare or Tencent. Network integration t
 
 ## CI
 
-`.github/workflows/ci.yml` runs rustfmt, Clippy, and tests on Linux, then release builds and tests on Linux, macOS, and Windows. CI uses the lockfile and Rust 1.85; reproduce those commands locally.
+`.github/workflows/ci.yml` runs rustfmt, Clippy, and tests on Linux x86_64, then runs release builds and tests on native x86_64 and ARM64 runners for Linux, macOS, and Windows. All six native jobs exercise the same JSON schema, DNS fallback, plugin, and optimizer tests. CI uses the lockfile and Rust 1.85; reproduce those commands locally.
 
 ## Releases
 
@@ -62,7 +62,7 @@ Tests do not depend on CI access to Cloudflare or Tencent. Network integration t
 - `v1.2.3-alpha.1`, `v1.2.3-beta.1`, and `v1.2.3-rc.1` create pre-releases.
 - Invalid semantic-version tags fail before building.
 
-The workflow builds Linux x86_64, Intel macOS, Apple Silicon macOS, and Windows x86_64 assets. Linux and Windows publish archives containing the CLI and UI binaries. macOS publishes architecture-specific unsigned `.dmg` images containing an `EdgeSteer.app` that can be dragged to Applications; the App bundle manages the DNS engine (using a hidden elevated helper for port 53 when needed) and contains no standalone command-line service.
+The workflow builds x86_64 and ARM64 assets for Linux, macOS, and Windows. Linux and Windows publish archives containing the CLI and UI binaries. macOS publishes architecture-specific unsigned `.dmg` images containing an `EdgeSteer.app` that can be dragged to Applications; the App bundle manages the DNS engine (using a hidden elevated helper for port 53 when needed) and contains no standalone command-line service.
 
 Example:
 
