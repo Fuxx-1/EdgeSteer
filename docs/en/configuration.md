@@ -4,9 +4,9 @@
 
 EdgeSteer uses strict JSON. Objects marked with `deny_unknown_fields` reject misspelled and unimplemented fields. Use `--check-config` before starting a listener.
 
-## Default regional routing chain
+## Default four-layer chain
 
-`config.example.json` implements the default policy: local-name bypass, Tencent first for China, Cloudflare first for known overseas domains, and a complete fallback chain for unknown domains. This is the full usable structure:
+`config.example.json` implements the default policy: local-name bypass, Tencent first for China, Cloudflare for every other public name, then local fallback if Cloudflare fails. This is the full usable structure:
 
 ```json
 {
@@ -24,13 +24,6 @@ EdgeSteer uses strict JSON. Objects marked with `deny_unknown_fields` reject mis
       "tag": "geosite-cn",
       "type": "remote",
       "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-      "update_interval_secs": 86400,
-      "timeout_ms": 10000
-    },
-    {
-      "tag": "geosite-geolocation-not-cn",
-      "type": "remote",
-      "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-%21cn.srs",
       "update_interval_secs": 86400,
       "timeout_ms": 10000
     }
@@ -52,46 +45,24 @@ EdgeSteer uses strict JSON. Objects marked with `deny_unknown_fields` reject mis
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30,
-      "next": "cn-preferred",
+      "next": "cn-doh",
       "match": {
         "mode": "contains",
         "keywords": ["b2c", "mi", "local"]
       }
     },
     {
-      "tag": "cn-preferred",
+      "tag": "cn-doh",
       "type": "doh",
       "address": "120.53.53.53:443",
       "url": "https://doh.pub/dns-query",
       "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "next": "overseas-preferred",
+      "next": "cloudflare-doh",
       "fallback": "cloudflare-doh",
       "match": {
         "rule_sets": ["geosite-cn"]
       }
-    },
-    {
-      "tag": "overseas-preferred",
-      "type": "doh",
-      "address": "1.1.1.1:443",
-      "url": "https://cloudflare-dns.com/dns-query",
-      "timeout_ms": 2800,
-      "plugin": "cloudflare-preferred",
-      "next": "preferred",
-      "fallback": "local-fallback",
-      "match": {
-        "rule_sets": ["geosite-geolocation-not-cn"]
-      }
-    },
-    {
-      "tag": "preferred",
-      "type": "doh",
-      "address": "120.53.53.53:443",
-      "url": "https://doh.pub/dns-query",
-      "timeout_ms": 2800,
-      "plugin": "cloudflare-preferred",
-      "fallback": "cloudflare-doh"
     },
     {
       "tag": "cloudflare-doh",
@@ -116,11 +87,9 @@ Every request begins at `entry: local-keyword`; declaration order does not parti
 
 `local-keyword` uses `contains`, a literal substring match like sing-box `domain_keyword`; `mi` therefore matches any domain containing those two characters. Change that layer's `mode` to `label` if only a complete DNS label should match, such as the `mi` in `work.be.mi.com`.
 
-- A `local-keyword` match uses dynamic local DNS; a miss follows `next: cn-preferred`.
-- `geosite-cn`, from the `sing-geosite` `rule-set` branch, uses Tencent DoH in `cn-preferred`; only a network or protocol failure then tries Cloudflare DoH.
-- `geosite-geolocation-!cn` is the set of known overseas domains. Its `!` is URL-encoded as `%21`. It is reached only after `cn-preferred` misses, then uses Cloudflare DoH and falls back to dynamic local DNS only on failure.
-- A domain matching neither rule set follows both `next` links to `preferred`: Tencent DoH → Cloudflare DoH → dynamic local DNS. A multi-question packet has no single name, skips every filtered layer, and follows the same default chain.
-- `geosite-geolocation-!cn` is not a set of every non-Chinese domain. A domain not included in, or not yet loaded from, that set does not get misclassified as overseas; it follows the default chain above.
+- A `local-keyword` match uses dynamic local DNS; a miss follows `next: cn-doh`.
+- `geosite-cn`, from the `sing-geosite` `rule-set` branch, uses Tencent DoH in `cn-doh`; both a miss and a network or protocol failure continue directly to Cloudflare DoH.
+- `cloudflare-doh` is the sole public default layer. It handles every non-local query not matched by `geosite-cn`, then falls back to dynamic local DNS only on failure. A multi-question packet has no single name, skips every filtered layer, and reaches this layer too.
 
 `local` reads real upstreams from the operating system's network DNS configuration. It does not call the system resolver and does not accept `address`. On macOS it enumerates non-tunnel SystemConfiguration services, skipping virtual `utun`/`ppp`/`tun` interfaces; when a physical service has only loopback or listener DNS configured, it reads that service's current IPv4 DNS from DHCP option 6. Linux uses systemd-resolved's real `resolv.conf` when present, otherwise `/etc/resolv.conf`; Windows reads DNS settings from enabled adapters. EdgeSteer sends DNS wire queries directly to the discovered numeric addresses and filters loopback, unspecified, multicast, IPv6 link-local, duplicate, and listener addresses.
 

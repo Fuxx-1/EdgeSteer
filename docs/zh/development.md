@@ -52,7 +52,7 @@ cargo run --release -- --check-config
 
 ## CI
 
-`.github/workflows/ci.yml` 在 Linux x86_64 上执行 rustfmt、Clippy 和测试，并在 Linux、macOS、Windows 的 x86_64 与 ARM64 原生 runner 上分别做 release build 与测试。六个 native job 都运行同一份 JSON schema、DNS fallback、插件和 optimizer 测试；CI 使用锁文件和 Rust 1.85 toolchain，开发者本地应尽量复现同样命令。
+`.github/workflows/ci.yml` 在 Linux x86_64 上执行 rustfmt、Clippy 和测试，再测试其余五个 Linux、macOS、Windows 原生目标。Linux x86_64 已由质量任务覆盖，不在原生矩阵中重复构建。依赖缓存按目标与锁文件隔离；同一分支过期的运行会取消，任一原生目标失败会停止尚未开始的同伴任务。发布 tag 仍会构建全部六个原生安装包。CI 使用锁文件和 Rust 1.85 toolchain，开发者本地应尽量复现同样命令。
 
 ## Release
 

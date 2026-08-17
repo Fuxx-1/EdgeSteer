@@ -4,9 +4,9 @@
 
 EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒绝拼写错误或未实现的字段；修改配置前可以用 `--check-config` 只做校验而不启动 listener。
 
-## 默认区域分流链路
+## 默认四层链路
 
-`config.example.json` 的默认策略是“本地域名直连、国内优先腾讯、已知海外优先 CF、未知域名保留完整回退”。下面是可直接使用的完整结构：
+`config.example.json` 的默认策略是“本地域名直连、国内优先腾讯、其余公网域名走 CF、CF 失败回退本地”。下面是可直接使用的完整结构：
 
 ```json
 {
@@ -24,13 +24,6 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
       "tag": "geosite-cn",
       "type": "remote",
       "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-      "update_interval_secs": 86400,
-      "timeout_ms": 10000
-    },
-    {
-      "tag": "geosite-geolocation-not-cn",
-      "type": "remote",
-      "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-%21cn.srs",
       "update_interval_secs": 86400,
       "timeout_ms": 10000
     }
@@ -52,46 +45,24 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30,
-      "next": "cn-preferred",
+      "next": "cn-doh",
       "match": {
         "mode": "contains",
         "keywords": ["b2c", "mi", "local"]
       }
     },
     {
-      "tag": "cn-preferred",
+      "tag": "cn-doh",
       "type": "doh",
       "address": "120.53.53.53:443",
       "url": "https://doh.pub/dns-query",
       "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "next": "overseas-preferred",
+      "next": "cloudflare-doh",
       "fallback": "cloudflare-doh",
       "match": {
         "rule_sets": ["geosite-cn"]
       }
-    },
-    {
-      "tag": "overseas-preferred",
-      "type": "doh",
-      "address": "1.1.1.1:443",
-      "url": "https://cloudflare-dns.com/dns-query",
-      "timeout_ms": 2800,
-      "plugin": "cloudflare-preferred",
-      "next": "preferred",
-      "fallback": "local-fallback",
-      "match": {
-        "rule_sets": ["geosite-geolocation-not-cn"]
-      }
-    },
-    {
-      "tag": "preferred",
-      "type": "doh",
-      "address": "120.53.53.53:443",
-      "url": "https://doh.pub/dns-query",
-      "timeout_ms": 2800,
-      "plugin": "cloudflare-preferred",
-      "fallback": "cloudflare-doh"
     },
     {
       "tag": "cloudflare-doh",
@@ -116,11 +87,9 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
 
 `local-keyword` 使用 `contains`，与 sing-box 的 `domain_keyword` 一样是字面子串匹配；因此 `mi` 会匹配任何含有这两个字符的域名。若只希望匹配完整 DNS label（例如 `work.be.mi.com` 中的 `mi`），将该层的 `mode` 改为 `label`。
 
-- `local-keyword` 命中时直连动态 local；未命中走 `next: cn-preferred`。
-- `geosite-cn` 来自 `sing-geosite` 的 `rule-set` 分支，国内集合在 `cn-preferred` 使用 Tencent DoH；网络或协议失败后才走 Cloudflare DoH。
-- `geosite-geolocation-!cn` 是已收录的海外域名集合；URL 中的 `!` 写为 `%21`。`cn-preferred` 未命中时才继续到该层，命中后使用 Cloudflare DoH，失败后走动态 local。
-- 未命中任一规则集的域名经过两个 `next` 进入 `preferred`，即 Tencent DoH → Cloudflare DoH → 动态 local。多 question 请求没有唯一域名，跳过所有带 `match` 的层后走同一默认链。
-- `geosite-geolocation-!cn` 不是“所有非国内域名”的集合。规则集尚未收录或尚未加载的域名不会误走海外分支，而是使用上述默认链。
+- `local-keyword` 命中时直连动态 local；未命中走 `next: cn-doh`。
+- `geosite-cn` 来自 `sing-geosite` 的 `rule-set` 分支，国内集合在 `cn-doh` 使用 Tencent DoH；未命中和网络或协议失败都直接进入 Cloudflare DoH。
+- `cloudflare-doh` 是唯一的公网默认层，处理所有非本地、非国内规则集命中的查询；失败后走动态 local。多 question 请求没有唯一域名，跳过所有带 `match` 的层后也进入该层。
 
 `local` 从操作系统的网络 DNS 配置读取真实上游，不调用系统 resolver，也不接受 `address`。macOS 枚举 SystemConfiguration 中非隧道网络服务（跳过 `utun`/`ppp`/`tun` 等虚拟接口）；当物理服务的配置 DNS 只有回环或 listener 地址时，改读同一服务 DHCP Option 6 中当前下发的 IPv4 DNS。Linux 读取 systemd-resolved 的真实 `resolv.conf`（存在时）或 `/etc/resolv.conf`，Windows 读取已启用网卡的 DNS 配置。EdgeSteer 对发现到的数值地址直接发送 DNS wire query；它会过滤回环、未指定、组播、IPv6 link-local、重复地址和自身 listener。
 

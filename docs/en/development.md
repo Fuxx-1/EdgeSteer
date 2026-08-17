@@ -52,7 +52,7 @@ Tests do not depend on CI access to Cloudflare or Tencent. Network integration t
 
 ## CI
 
-`.github/workflows/ci.yml` runs rustfmt, Clippy, and tests on Linux x86_64, then runs release builds and tests on native x86_64 and ARM64 runners for Linux, macOS, and Windows. All six native jobs exercise the same JSON schema, DNS fallback, plugin, and optimizer tests. CI uses the lockfile and Rust 1.85; reproduce those commands locally.
+`.github/workflows/ci.yml` runs rustfmt, Clippy, and tests on Linux x86_64, then tests the remaining five native Linux, macOS, and Windows targets. Linux x86_64 is not repeated in the native matrix because the quality job already covers it. Dependency caches are keyed by target and lockfile, obsolete runs for the same branch are cancelled, and a failing native target stops queued peers. Release tags still build all six installable native assets. CI uses the lockfile and Rust 1.85; reproduce those commands locally.
 
 ## Releases
 

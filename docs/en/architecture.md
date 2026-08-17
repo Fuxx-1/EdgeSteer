@@ -11,20 +11,15 @@ flowchart TB
     C["DNS client request"] --> P["Parse and validate"]
     P --> E["entry: local-keyword"]
     E -->|"match"| K["Dynamic system DNS upstreams"]
-    E -->|"miss: next"| CN["cn-preferred<br/>Tencent DoH + plugin"]
+    E -->|"miss: next"| CN["cn-doh<br/>Tencent DoH + plugin"]
     CN -->|"match: success"| O["Run plugin and return"]
-    CN -->|"miss: next"| OS["overseas-preferred<br/>Cloudflare DoH + plugin"]
-    CN -. "failure: fallback" .-> D["Cloudflare DoH + plugin"]
-    OS -->|"match: success"| O
-    OS -->|"miss: next"| DF["preferred<br/>Tencent DoH + plugin"]
-    OS -. "failure: fallback" .-> L["Dynamic system DNS upstreams"]
-    DF -. "failure: fallback" .-> D
+    CN -->|"miss or failure"| D["cloudflare-doh<br/>Cloudflare DoH + plugin"]
     D -. "failure: fallback" .-> L
     K --> O
     L --> O
 ```
 
-Every layer is a resolver node. `entry` is the only start, `next` is evaluated only after a filter miss, and `fallback` is evaluated only after that resolver's network or protocol failure. The JSON describes a graph, but execution follows one validated, acyclic path. Keywords and SRS domain rule sets never select a global start and never duplicate a query across resolvers. In the example, local names use dynamic local DNS, China uses Tencent first, known overseas domains use Cloudflare first, and unmatched domains continue through the default Tencent → Cloudflare → local path.
+Every layer is a resolver node. `entry` is the only start, `next` is evaluated only after a filter miss, and `fallback` is evaluated only after that resolver's network or protocol failure. The JSON describes a graph, but execution follows one validated, acyclic path. Keywords and SRS domain rule sets never select a global start and never duplicate a query across resolvers. The default chain has four layers: local names use dynamic local DNS, Chinese-rule matches use Tencent, every other public name goes directly to Cloudflare, and Cloudflare failures fall back to dynamic local DNS.
 
 ## Component responsibilities
 

@@ -9,6 +9,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   validate-tag:
@@ -37,7 +38,8 @@ jobs:
     name: Build ${{ matrix.asset }}
     needs: validate-tag
     strategy:
-      fail-fast: false
+      fail-fast: true
+      max-parallel: 3
       matrix:
         include:
           - os: ubuntu-latest
@@ -82,24 +84,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85.0
         with:
           targets: ${{ matrix.target }}
-      - name: Assert native target
-        uses: actions/github-script@v8
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
         with:
-          script: |
-            const { execFileSync } = require("node:child_process");
-            const expectedArch = "${{ matrix.runner_arch }}";
-            const expectedTarget = "${{ matrix.target }}";
-
-            if (process.env.RUNNER_ARCH !== expectedArch) {
-              throw new Error(`Expected ${expectedArch} runner, got ${process.env.RUNNER_ARCH}`);
-            }
-
-            const version = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
-            const host = version.match(/^host: (.+)$/m)?.[1];
-            if (host !== expectedTarget) {
-              throw new Error(`Expected Rust host ${expectedTarget}, got ${host}`);
-            }
-            core.info(`Validated native ${expectedArch} runner for ${host}`);
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            release-${{ matrix.target }}-
+      - name: Assert native target (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.runner_arch }}
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          test "$RUNNER_ARCH" = "$EXPECTED_ARCH"
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$host" = "$EXPECTED_TARGET"
+      - name: Assert native target (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          EXPECTED_ARCH: ${{ matrix.runner_arch }}
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          if ($env:RUNNER_ARCH -ne $env:EXPECTED_ARCH) { throw "Expected $env:EXPECTED_ARCH runner, got $env:RUNNER_ARCH" }
+          $hostTarget = ((rustc -vV | Select-String '^host: ').ToString() -replace '^host: ', '').Trim()
+          if ($hostTarget -ne $env:EXPECTED_TARGET) { throw "Expected $env:EXPECTED_TARGET Rust host, got $hostTarget" }
       - name: Install Linux tray dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev
@@ -144,7 +158,6 @@ jobs:
     needs: [validate-tag, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v5
         with:
           path: release-assets

@@ -864,11 +864,6 @@ mod tests {
               "tag": "cn",
               "type": "remote",
               "url": "https://example.com/geosite-cn.srs"
-            },
-            {
-              "tag": "overseas",
-              "type": "remote",
-              "url": "https://example.com/geosite-geolocation-not-cn.srs"
             }
           ],
           "plugins": [{
@@ -880,45 +875,28 @@ mod tests {
               "tag": "local-keyword",
               "type": "local",
               "refresh_secs": 30,
-              "next": "cn-preferred",
+              "next": "cn-doh",
               "match": {
                 "mode": "contains",
                 "keywords": ["b2c", "mi", "local"]
               }
             },
             {
-              "tag": "cn-preferred",
+              "tag": "cn-doh",
               "type": "doh",
               "address": "120.53.53.53:443",
               "url": "https://doh.pub/dns-query",
               "plugin": "cloudflare-preferred",
-              "fallback": "cf",
-              "next": "overseas-preferred",
+              "fallback": "cloudflare-doh",
+              "next": "cloudflare-doh",
               "match": { "rule_sets": ["cn"] }
             },
             {
-              "tag": "overseas-preferred",
+              "tag": "cloudflare-doh",
               "type": "doh",
               "address": "1.1.1.1:443",
               "url": "https://cloudflare-dns.com/dns-query",
               "plugin": "cloudflare-preferred",
-              "fallback": "local-fallback",
-              "next": "preferred",
-              "match": { "rule_sets": ["overseas"] }
-            },
-            {
-              "tag": "preferred",
-              "type": "doh",
-              "address": "120.53.53.53:443",
-              "url": "https://doh.pub/dns-query",
-              "plugin": "cloudflare-preferred",
-              "fallback": "cf"
-            },
-            {
-              "tag": "cf",
-              "type": "doh",
-              "address": "1.1.1.1:443",
-              "url": "https://cloudflare-dns.com/dns-query",
               "fallback": "local-fallback"
             },
             {
@@ -959,7 +937,7 @@ mod tests {
         );
         assert!(
             config
-                .layer("cn-preferred")
+                .layer("cn-doh")
                 .expect("China layer")
                 .matcher
                 .applies_to_with_rule_sets(Some("www.example.cn."), &|tag, domain| {
@@ -968,7 +946,7 @@ mod tests {
         );
         assert!(
             config
-                .layer("preferred")
+                .layer("cloudflare-doh")
                 .expect("default layer")
                 .matcher
                 .applies_to_with_rule_sets(None, &|_, _| false)
@@ -1001,7 +979,7 @@ mod tests {
     #[test]
     fn rejects_doh_with_a_mismatched_bootstrap_port() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        layer_mut(&mut config, "cf").address = Some("1.1.1.1:8443".parse().unwrap());
+        layer_mut(&mut config, "cloudflare-doh").address = Some("1.1.1.1:8443".parse().unwrap());
         assert!(config.validate().is_err());
     }
 
@@ -1044,14 +1022,14 @@ mod tests {
         let config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
         assert!(
             config
-                .layer("preferred")
+                .layer("cloudflare-doh")
                 .expect("default layer")
                 .matcher
                 .applies_to_with_rule_sets(None, &|_, _| false)
         );
         assert!(
             !config
-                .layer("cn-preferred")
+                .layer("cn-doh")
                 .expect("China layer")
                 .matcher
                 .applies_to_with_rule_sets(None, &|_, _| false)
@@ -1085,37 +1063,30 @@ mod tests {
         );
         assert!(
             config
-                .layer("cn-preferred")
+                .layer("cn-doh")
                 .expect("China layer")
                 .matcher
                 .applies_to_with_rule_sets(Some("www.qq.com."), &|tag, _| tag == "geosite-cn")
         );
         assert!(
             config
-                .layer("overseas-preferred")
-                .expect("overseas layer")
+                .layer("cloudflare-doh")
+                .expect("default Cloudflare layer")
                 .matcher
-                .applies_to_with_rule_sets(Some("www.google.com."), &|tag, _| {
-                    tag == "geosite-geolocation-not-cn"
-                })
+                .applies_to_with_rule_sets(Some("www.google.com."), &|_, _| false)
         );
         assert_eq!(
             config
-                .layer("cn-preferred")
+                .layer("cn-doh")
                 .and_then(|layer| layer.next.as_deref()),
-            Some("overseas-preferred")
-        );
-        assert_eq!(
-            config
-                .layer("overseas-preferred")
-                .and_then(|layer| layer.next.as_deref()),
-            Some("preferred")
-        );
-        assert_eq!(
-            config
-                .layer("preferred")
-                .and_then(|layer| layer.fallback.as_deref()),
             Some("cloudflare-doh")
+        );
+        assert_eq!(config.layers.len(), 4);
+        assert_eq!(
+            config
+                .layer("cloudflare-doh")
+                .and_then(|layer| layer.fallback.as_deref()),
+            Some("local-fallback")
         );
         assert_eq!(
             config

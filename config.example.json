@@ -15,13 +15,6 @@
       "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
       "update_interval_secs": 86400,
       "timeout_ms": 10000
-    },
-    {
-      "tag": "geosite-geolocation-not-cn",
-      "type": "remote",
-      "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-%21cn.srs",
-      "update_interval_secs": 86400,
-      "timeout_ms": 10000
     }
   ],
   "plugins": [
@@ -82,46 +75,24 @@
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30,
-      "next": "cn-preferred",
+      "next": "cn-doh",
       "match": {
         "mode": "contains",
         "keywords": ["b2c", "mi", "local"]
       }
     },
     {
-      "tag": "cn-preferred",
+      "tag": "cn-doh",
       "type": "doh",
       "address": "120.53.53.53:443",
       "url": "https://doh.pub/dns-query",
       "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "next": "overseas-preferred",
+      "next": "cloudflare-doh",
       "fallback": "cloudflare-doh",
       "match": {
         "rule_sets": ["geosite-cn"]
       }
-    },
-    {
-      "tag": "overseas-preferred",
-      "type": "doh",
-      "address": "1.1.1.1:443",
-      "url": "https://cloudflare-dns.com/dns-query",
-      "timeout_ms": 2800,
-      "plugin": "cloudflare-preferred",
-      "next": "preferred",
-      "fallback": "local",
-      "match": {
-        "rule_sets": ["geosite-geolocation-not-cn"]
-      }
-    },
-    {
-      "tag": "preferred",
-      "type": "doh",
-      "address": "120.53.53.53:443",
-      "url": "https://doh.pub/dns-query",
-      "timeout_ms": 2800,
-      "plugin": "cloudflare-preferred",
-      "fallback": "cloudflare-doh"
     },
     {
       "tag": "cloudflare-doh",
@@ -130,10 +101,10 @@
       "url": "https://cloudflare-dns.com/dns-query",
       "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "fallback": "local"
+      "fallback": "local-fallback"
     },
     {
-      "tag": "local",
+      "tag": "local-fallback",
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30
