@@ -3742,7 +3742,7 @@ mod tests {
                 layer
                     .as_object()
                     .and_then(|layer| object_string(layer, "tag"))
-                    == Some("preferred")
+                    == Some("cloudflare-doh")
             })
             .expect("bundled default resolver layer");
 

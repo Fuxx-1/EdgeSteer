@@ -11,20 +11,15 @@ flowchart TB
     C["客户端 DNS 请求"] --> P["解析并校验请求"]
     P --> E["entry: local-keyword"]
     E -->|"命中"| K["动态系统 DNS 上游"]
-    E -->|"未命中: next"| CN["cn-preferred<br/>Tencent DoH + plugin"]
+    E -->|"未命中: next"| CN["cn-doh<br/>Tencent DoH + plugin"]
     CN -->|"命中且成功"| O["执行 plugin 后返回"]
-    CN -->|"未命中: next"| OS["overseas-preferred<br/>Cloudflare DoH + plugin"]
-    CN -. "失败: fallback" .-> D["Cloudflare DoH + plugin"]
-    OS -->|"命中且成功"| O
-    OS -->|"未命中: next"| DF["preferred<br/>Tencent DoH + plugin"]
-    OS -. "失败: fallback" .-> L["动态系统 DNS 上游"]
-    DF -. "失败: fallback" .-> D
+    CN -->|"未命中或失败"| D["cloudflare-doh<br/>Cloudflare DoH + plugin"]
     D -. "失败: fallback" .-> L
     K --> O
     L --> O
 ```
 
-每个 layer 都是 resolver 节点。`entry` 是唯一入口，`next` 只在过滤未命中时使用，`fallback` 只在本 resolver 的网络或协议失败时使用。配置看起来像图，但运行时只允许沿一条经过校验的无环路径前进；关键词和 SRS 域名规则集不会选择全局起点，也不会把请求复制给多个 resolver。示例中本地域名直接使用动态 local，国内先用 Tencent，已收录海外先用 CF，未分类则进入 Tencent → CF → local 默认路径。
+每个 layer 都是 resolver 节点。`entry` 是唯一入口，`next` 只在过滤未命中时使用，`fallback` 只在本 resolver 的网络或协议失败时使用。配置看起来像图，但运行时只允许沿一条经过校验的无环路径前进；关键词和 SRS 域名规则集不会选择全局起点，也不会把请求复制给多个 resolver。默认链只有四层：本地域名使用动态 local，国内规则命中 Tencent，其他公网域名直接进入 CF，CF 失败时回退动态 local。
 
 ## 组件职责
 

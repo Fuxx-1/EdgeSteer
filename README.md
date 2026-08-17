@@ -17,25 +17,19 @@ EdgeSteer 判断的是 DNS 响应里的地址，而不是域名文字。一个�
 flowchart TB
     Client["DNS client"] --> Entry["entry: local-keyword"]
     Entry -->|"match: b2c / mi / local"| LocalKeyword["dynamic local DNS"]
-    Entry -->|"miss: next"| CN["cn-preferred: Tencent DoH + CF plugin"]
+    Entry -->|"miss: next"| CN["cn-doh: Tencent DoH + CF plugin"]
     CN -->|"match: geosite-cn"| TencentResult["return rewritten or original answer"]
-    CN -->|"miss: next"| Overseas["overseas-preferred: CF DoH + CF plugin"]
-    CN -->|"failure: fallback"| CF["Cloudflare DoH + CF plugin"]
-    Overseas -->|"match"| OverseasResult["return rewritten or original answer"]
-    Overseas -->|"miss: next"| Default["preferred: Tencent DoH + CF plugin"]
-    Overseas -->|"failure: fallback"| LocalFallback["dynamic local DNS"]
-    Default -->|"failure: fallback"| CF
+    CN -->|"miss or failure"| CF["cloudflare-doh: Cloudflare DoH + CF plugin"]
     CF -->|"failure: fallback"| LocalFallback
 ```
 
 请求始终从 `entry` 开始，示例链的行为是：
 
 - `local-keyword` 命中 `b2c`、`mi`、`local` 时使用动态本地 DNS；未命中才经 `next` 继续；
-- `cn-preferred` 命中 `geosite-cn` 时使用绑定 Cloudflare 优选插件的 Tencent DoH；失败才 `fallback` 至绑定插件的 Cloudflare DoH；
-- 未命中国内规则会继续到 `overseas-preferred`，命中已知海外规则时使用绑定插件的 Cloudflare DoH；
-- 再未命中则进入默认 Tencent DoH → Cloudflare DoH → 动态本地 DNS 链。多 question 请求跳过所有带 `match` 的层，沿 `next` 到默认层。
+- `cn-doh` 命中 `geosite-cn` 时使用绑定 Cloudflare 优选插件的 Tencent DoH；未命中或解析失败都进入 Cloudflare DoH；
+- `cloudflare-doh` 是唯一的公网默认层，处理所有非本地、非国内规则集命中的查询；失败才回退动态本地 DNS。多 question 请求跳过所有带 `match` 的层，直接进入本层。
 
-`geosite-geolocation-!cn` 不是“所有非中国域名”的补集，只覆盖该规则集已收录的海外域名；因此未知域名仍保留默认的完整回退链。Cloudflare 优选插件只在绑定它的 resolver 成功返回响应后运行；地址全部通过 Cloudflare 网段校验时才改写 A、AAAA 以及 HTTPS/SVCB hints。改写会清除 DNSSEC 的 `AD`、`DO` 和 RRSIG，避免把已修改的数据标成已认证。
+示例只需要 `geosite-cn` 一份域名规则集，不再尝试用“海外规则集”覆盖未知域名。Cloudflare 优选插件只在绑定它的 resolver 成功返回响应后运行；地址全部通过 Cloudflare 网段校验时才改写 A、AAAA 以及 HTTPS/SVCB hints。改写会清除 DNSSEC 的 `AD`、`DO` 和 RRSIG，避免把已修改的数据标成已认证。
 
 内置 optimizer 以 TCP + TLS + HTTP 探测 Cloudflare 地址，要求测试端点返回 2xx 且 `server: cloudflare`，并独立选择最快的 IPv4 与 IPv6。它是连通性和时延选择器，不等同于真实业务带宽测试。
 

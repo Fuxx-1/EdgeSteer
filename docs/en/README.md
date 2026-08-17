@@ -17,25 +17,19 @@ The sample evaluates one entry chain, layer by layer:
 flowchart TB
     Client["DNS client"] --> Entry["entry: local-keyword"]
     Entry -->|"match: b2c / mi / local"| LocalKeyword["dynamic local DNS"]
-    Entry -->|"miss: next"| CN["cn-preferred: Tencent DoH + CF plugin"]
+    Entry -->|"miss: next"| CN["cn-doh: Tencent DoH + CF plugin"]
     CN -->|"match: geosite-cn"| TencentResult["return rewritten or original answer"]
-    CN -->|"miss: next"| Overseas["overseas-preferred: CF DoH + CF plugin"]
-    CN -->|"failure: fallback"| CF["Cloudflare DoH + CF plugin"]
-    Overseas -->|"match"| OverseasResult["return rewritten or original answer"]
-    Overseas -->|"miss: next"| Default["preferred: Tencent DoH + CF plugin"]
-    Overseas -->|"failure: fallback"| LocalFallback["dynamic local DNS"]
-    Default -->|"failure: fallback"| CF
+    CN -->|"miss or failure"| CF["cloudflare-doh: Cloudflare DoH + CF plugin"]
     CF -->|"failure: fallback"| LocalFallback
 ```
 
 Every request begins at `entry`; the sample chain behaves as follows:
 
 - A `local-keyword` match for `b2c`, `mi`, or `local` uses dynamic local DNS; a miss continues through `next`.
-- A `cn-preferred` match uses Tencent DoH with the Cloudflare-preferred plugin; only its resolver failure falls back to Cloudflare DoH with the same plugin.
-- A non-match continues to `overseas-preferred`, whose known-overseas match uses Cloudflare DoH with the plugin.
-- A further non-match reaches the default Tencent DoH → Cloudflare DoH → dynamic local DNS chain. Multi-question packets skip every filtered layer and follow `next` to the default layer.
+- A `cn-doh` match uses Tencent DoH with the Cloudflare-preferred plugin; both a miss and a resolver failure continue to Cloudflare DoH.
+- `cloudflare-doh` is the sole public default layer. It handles every non-local query not matched by `geosite-cn`, then falls back to dynamic local DNS only on failure. Multi-question packets skip filtered layers and arrive here directly.
 
-`geosite-geolocation-!cn` is not the complement of all Chinese domains: it only covers the overseas domains present in that rule set. Unknown domains therefore retain the full default fallback chain. The Cloudflare-preferred plugin runs only after its attached resolver returns a complete response, then rewrites A, AAAA, and HTTPS/SVCB hints only when the relevant addresses are all verified as Cloudflare. Rewriting clears DNSSEC `AD`, `DO`, and RRSIG state.
+The sample needs only `geosite-cn`; it no longer tries to classify every unknown name with an overseas rule set. The Cloudflare-preferred plugin runs only after its attached resolver returns a complete response, then rewrites A, AAAA, and HTTPS/SVCB hints only when the relevant addresses are all verified as Cloudflare. Rewriting clears DNSSEC `AD`, `DO`, and RRSIG state.
 
 The built-in optimizer probes Cloudflare addresses with TCP, TLS, and HTTP. A candidate must return a 2xx response with `server: cloudflare`; the fastest IPv4 and IPv6 are selected independently. This is a reachability and latency selector, not a bandwidth benchmark.
 
