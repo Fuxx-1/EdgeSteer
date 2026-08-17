@@ -179,8 +179,8 @@ fn chinese_text(value: &str) -> Option<&'static str> {
         "Load" => "加载",
         "Save configuration" => "保存配置",
         "Resolver graph" => "解析图",
-        "Manage fallback layers, domain rules, and Cloudflare IP rewriting." => {
-            "管理回退层、域名规则和 Cloudflare IP 改写。"
+        "Manage ordered resolver layers, domain rules, and Cloudflare IP rewriting." => {
+            "管理有序解析层、域名规则和 Cloudflare IP 改写。"
         }
         "Refresh runtime" => "刷新运行状态",
         "Select a layer" => "选择层级",
@@ -198,7 +198,7 @@ fn chinese_text(value: &str) -> Option<&'static str> {
         }
         "Allow remote resolver clients" => "允许远程解析客户端",
         "Routing" => "路由",
-        "The entry layer starts the configured fallback graph." => "入口层启动已配置的回退图。",
+        "The entry layer starts the configured resolver graph." => "入口层启动已配置的解析图。",
         "Default entry layer" => "默认入口层",
         "Whole request timeout (ms)" => "整次请求超时（毫秒）",
         "Cloudflare range data" => "Cloudflare 网段数据",
@@ -210,24 +210,27 @@ fn chinese_text(value: &str) -> Option<&'static str> {
         }
         "Resolver layers" => "解析层",
         "Layer" => "层",
-        "Order determines matching priority." => "顺序决定匹配优先级。",
+        "Links determine request flow; list order is only for editing." => {
+            "请求流程由连接关系决定；列表顺序仅用于编辑。"
+        }
         "Add layer" => "添加层",
         "Layer type" => "层类型",
         "Select a resolver layer to edit it." => "选择一个解析层进行编辑。",
         "The selected resolver layer is unavailable." => "所选解析层不可用。",
-        "Resolver behavior, fallback, and domain targeting for this layer." => {
-            "配置该层的解析行为、回退关系和域名匹配。"
+        "Resolver behavior, next/fallback routing, and domain targeting for this layer." => {
+            "配置该层的解析行为、next/fallback 路由和域名匹配。"
         }
-        "Fallback layer tag" => "回退层标识",
+        "Next layer on no match" => "未命中时的下一层",
+        "Fallback layer on resolver failure" => "解析器失败时的回退层",
         "Bootstrap address" => "引导地址",
-        "Plugin tag" => "插件标识",
+        "Response plugin tag (optional)" => "响应插件标识（可选）",
         "TLS server name" => "TLS 服务器名称",
         "System DNS refresh (seconds)" => "系统 DNS 刷新间隔（秒）",
         "Move up" => "上移",
         "Move down" => "下移",
         "Domain match" => "域名匹配",
-        "Use keywords or loaded SRS rule sets to select this layer before the default entry." => {
-            "在默认入口之前，使用关键字或已加载的 SRS 规则集选择该层。"
+        "Only a matching filter uses this resolver; otherwise the request continues through next." => {
+            "只有匹配过滤条件时才使用本解析器；否则请求继续进入 next。"
         }
         "Match mode" => "匹配方式",
         "Remove layer" => "删除层",
@@ -236,8 +239,8 @@ fn chinese_text(value: &str) -> Option<&'static str> {
         "Source type" => "来源类型",
         "Select a rule set to edit it." => "选择一个规则集进行编辑。",
         "The selected rule set is unavailable." => "所选规则集不可用。",
-        "A remote or local SRS source used by resolver-layer domain matching." => {
-            "供解析层域名匹配使用的远程或本地 SRS 来源。"
+        "A remote or local SRS source used by resolver-layer domain filtering." => {
+            "供解析层域名过滤使用的远程或本地 SRS 来源。"
         }
         "Download timeout (ms)" => "下载超时（毫秒）",
         "Local SRS path" => "本地 SRS 路径",
@@ -324,7 +327,6 @@ fn chinese_text(value: &str) -> Option<&'static str> {
         "Compatibility hosts (comma separated)" => "兼容性验证主机（逗号分隔）",
         "Excluded candidate IPs/CIDRs (comma separated)" => "排除的候选 IP/CIDR（逗号分隔）",
         "Dynamic local DNS" => "动态本地 DNS",
-        "Interceptor" => "拦截器",
         "Full DNS label" => "完整 DNS 标签",
         "Literal substring" => "字面子串",
         "Remote SRS" => "远程 SRS",
@@ -686,18 +688,10 @@ enum LayerKind {
     Doh,
     Dot,
     Local,
-    Interceptor,
 }
 
 impl LayerKind {
-    const ALL: [Self; 6] = [
-        Self::Udp,
-        Self::Tcp,
-        Self::Doh,
-        Self::Dot,
-        Self::Local,
-        Self::Interceptor,
-    ];
+    const ALL: [Self; 5] = [Self::Udp, Self::Tcp, Self::Doh, Self::Dot, Self::Local];
 
     const fn wire_name(self) -> &'static str {
         match self {
@@ -706,7 +700,6 @@ impl LayerKind {
             Self::Doh => "doh",
             Self::Dot => "dot",
             Self::Local => "local",
-            Self::Interceptor => "interceptor",
         }
     }
 
@@ -717,7 +710,6 @@ impl LayerKind {
             Self::Doh => "DoH",
             Self::Dot => "DoT",
             Self::Local => "Dynamic local DNS",
-            Self::Interceptor => "Interceptor",
         })
     }
 
@@ -727,7 +719,6 @@ impl LayerKind {
             Some("tcp") => Self::Tcp,
             Some("doh") => Self::Doh,
             Some("dot") => Self::Dot,
-            Some("interceptor") => Self::Interceptor,
             _ => Self::Local,
         }
     }
@@ -835,6 +826,7 @@ enum Message {
     MoveLayerDown(usize),
     LayerTagChanged(usize, String),
     LayerTypeChanged(usize, LayerKind),
+    LayerNextChanged(usize, String),
     LayerFallbackChanged(usize, String),
     LayerPluginChanged(usize, String),
     LayerAddressChanged(usize, String),
@@ -1189,6 +1181,9 @@ impl Application for EdgeSteerUi {
                 self.document.set_layer_string(index, "tag", value)
             }
             Message::LayerTypeChanged(index, kind) => self.document.set_layer_type(index, kind),
+            Message::LayerNextChanged(index, value) => self
+                .document
+                .set_layer_optional_string(index, "next", value),
             Message::LayerFallbackChanged(index, value) => self
                 .document
                 .set_layer_optional_string(index, "fallback", value),
@@ -2207,7 +2202,6 @@ fn normalize_layer(layer: &mut Map<String, Value>, kind: LayerKind) {
             layer.remove("refresh_secs");
             layer.remove("url");
             layer.remove("server_name");
-            layer.remove("plugin");
             layer
                 .entry("address".to_owned())
                 .or_insert_with(|| Value::String("1.1.1.1:53".to_owned()));
@@ -2218,7 +2212,6 @@ fn normalize_layer(layer: &mut Map<String, Value>, kind: LayerKind) {
         LayerKind::Doh => {
             layer.remove("refresh_secs");
             layer.remove("server_name");
-            layer.remove("plugin");
             layer
                 .entry("address".to_owned())
                 .or_insert_with(|| Value::String("1.1.1.1:443".to_owned()));
@@ -2232,7 +2225,6 @@ fn normalize_layer(layer: &mut Map<String, Value>, kind: LayerKind) {
         LayerKind::Dot => {
             layer.remove("refresh_secs");
             layer.remove("url");
-            layer.remove("plugin");
             layer
                 .entry("address".to_owned())
                 .or_insert_with(|| Value::String("1.1.1.1:853".to_owned()));
@@ -2247,26 +2239,12 @@ fn normalize_layer(layer: &mut Map<String, Value>, kind: LayerKind) {
             layer.remove("address");
             layer.remove("url");
             layer.remove("server_name");
-            layer.remove("plugin");
             layer
                 .entry("timeout_ms".to_owned())
                 .or_insert_with(|| json!(1800));
             layer
                 .entry("refresh_secs".to_owned())
                 .or_insert_with(|| json!(30));
-        }
-        LayerKind::Interceptor => {
-            layer.remove("address");
-            layer.remove("timeout_ms");
-            layer.remove("refresh_secs");
-            layer.remove("url");
-            layer.remove("server_name");
-            layer
-                .entry("plugin".to_owned())
-                .or_insert_with(|| Value::String(String::new()));
-            layer
-                .entry("fallback".to_owned())
-                .or_insert_with(|| Value::String(String::new()));
         }
     }
 }
@@ -2441,7 +2419,7 @@ impl EdgeSteerUi {
                 row![
                     column![
                         text("Resolver graph").size(18),
-                        text("Manage fallback layers, domain rules, and Cloudflare IP rewriting.")
+                        text("Manage ordered resolver layers, domain rules, and Cloudflare IP rewriting.")
                             .size(13)
                             .style(theme::Text::Color(muted_text())),
                     ]
@@ -2543,7 +2521,7 @@ impl EdgeSteerUi {
             checkbox(self.language.text("Allow remote resolver clients"), allow_remote)
                 .on_toggle(Message::AllowRemoteChanged),
             text("Routing").size(18),
-            text("The entry layer starts the configured fallback graph.")
+            text("The entry layer starts the configured resolver graph.")
                 .size(13)
                 .style(theme::Text::Color(muted_text())),
             column![
@@ -2586,7 +2564,7 @@ impl EdgeSteerUi {
                 row![
                     column![
                         text("Resolver layers").size(18),
-                        text("Order determines matching priority.")
+                        text("Links determine request flow; list order is only for editing.")
                             .size(12)
                             .style(theme::Text::Color(muted_text())),
                     ]
@@ -2673,6 +2651,7 @@ impl EdgeSteerUi {
         };
         let kind = LayerKind::from_value(object_string(layer, "type"));
         let tag = object_string(layer, "tag").unwrap_or_default();
+        let next = object_string(layer, "next").unwrap_or_default();
         let fallback = object_string(layer, "fallback").unwrap_or_default();
         let plugin = object_string(layer, "plugin").unwrap_or_default();
         let address = object_string(layer, "address").unwrap_or_default();
@@ -2695,7 +2674,7 @@ impl EdgeSteerUi {
                 .size(12)
                 .style(theme::Text::Color(quiet_text())),
             text(tag).size(20),
-            text("Resolver behavior, fallback, and domain targeting for this layer.")
+            text("Resolver behavior, next/fallback routing, and domain targeting for this layer.")
                 .size(13)
                 .style(theme::Text::Color(muted_text())),
             labeled_input("Tag", tag, move |value| Message::LayerTagChanged(
@@ -2711,9 +2690,14 @@ impl EdgeSteerUi {
                 .width(Length::Fill),
             ]
             .spacing(6),
-            labeled_input("Fallback layer tag", fallback, move |value| {
-                Message::LayerFallbackChanged(index, value)
+            labeled_input("Next layer on no match", next, move |value| {
+                Message::LayerNextChanged(index, value)
             }),
+            labeled_input(
+                "Fallback layer on resolver failure",
+                fallback,
+                move |value| { Message::LayerFallbackChanged(index, value) }
+            ),
         ]
         .spacing(10);
 
@@ -2764,12 +2748,13 @@ impl EdgeSteerUi {
                         move |value| Message::LayerRefreshChanged(index, value),
                     ));
             }
-            LayerKind::Interceptor => {
-                controls = controls.push(labeled_input("Plugin tag", plugin, move |value| {
-                    Message::LayerPluginChanged(index, value)
-                }));
-            }
         }
+
+        controls = controls.push(labeled_input(
+            "Response plugin tag (optional)",
+            plugin,
+            move |value| Message::LayerPluginChanged(index, value),
+        ));
 
         let up = if index > 0 {
             button(text("Move up"))
@@ -2788,7 +2773,7 @@ impl EdgeSteerUi {
         controls = controls
             .push(text("Domain match").size(18))
             .push(
-                text("Use keywords or loaded SRS rule sets to select this layer before the default entry.")
+                text("Only a matching filter uses this resolver; otherwise the request continues through next.")
                     .size(13)
                     .style(theme::Text::Color(muted_text())),
             )
@@ -2946,7 +2931,7 @@ impl EdgeSteerUi {
             .size(12)
             .style(theme::Text::Color(quiet_text())),
             text(tag).size(20),
-            text("A remote or local SRS source used by resolver-layer domain matching.")
+            text("A remote or local SRS source used by resolver-layer domain filtering.")
                 .size(13)
                 .style(theme::Text::Color(muted_text())),
             labeled_input("Tag", tag, move |value| Message::RuleSetTagChanged(
@@ -3757,9 +3742,9 @@ mod tests {
                 layer
                     .as_object()
                     .and_then(|layer| object_string(layer, "tag"))
-                    == Some("tencent-doh")
+                    == Some("preferred")
             })
-            .expect("bundled Tencent resolver layer");
+            .expect("bundled default resolver layer");
 
         document.set_layer_type(index, LayerKind::Local);
 
@@ -3767,6 +3752,7 @@ mod tests {
         assert_eq!(object_string(layer, "type"), Some("local"));
         assert!(!layer.contains_key("address"));
         assert!(!layer.contains_key("url"));
+        assert_eq!(object_string(layer, "plugin"), Some("cloudflare-preferred"));
         assert!(document.is_valid());
     }
 

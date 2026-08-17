@@ -18,7 +18,7 @@ EdgeSteer uses strict JSON. Objects marked with `deny_unknown_fields` reject mis
     "range_refresh_secs": 86400
   },
   "request_timeout_ms": 8000,
-  "entry": "preferred",
+  "entry": "local-keyword",
   "rule_sets": [
     {
       "tag": "geosite-cn",
@@ -52,6 +52,7 @@ EdgeSteer uses strict JSON. Objects marked with `deny_unknown_fields` reject mis
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30,
+      "next": "cn-preferred",
       "match": {
         "mode": "contains",
         "keywords": ["b2c", "mi", "local"]
@@ -59,34 +60,37 @@ EdgeSteer uses strict JSON. Objects marked with `deny_unknown_fields` reject mis
     },
     {
       "tag": "cn-preferred",
-      "type": "interceptor",
+      "type": "doh",
+      "address": "120.53.53.53:443",
+      "url": "https://doh.pub/dns-query",
+      "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "fallback": "tencent-doh",
+      "next": "overseas-preferred",
+      "fallback": "cloudflare-doh",
       "match": {
         "rule_sets": ["geosite-cn"]
       }
     },
     {
       "tag": "overseas-preferred",
-      "type": "interceptor",
+      "type": "doh",
+      "address": "1.1.1.1:443",
+      "url": "https://cloudflare-dns.com/dns-query",
+      "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "fallback": "cloudflare-doh",
+      "next": "preferred",
+      "fallback": "local-fallback",
       "match": {
         "rule_sets": ["geosite-geolocation-not-cn"]
       }
     },
     {
       "tag": "preferred",
-      "type": "interceptor",
-      "plugin": "cloudflare-preferred",
-      "fallback": "tencent-doh"
-    },
-    {
-      "tag": "tencent-doh",
       "type": "doh",
       "address": "120.53.53.53:443",
       "url": "https://doh.pub/dns-query",
       "timeout_ms": 2800,
+      "plugin": "cloudflare-preferred",
       "fallback": "cloudflare-doh"
     },
     {
@@ -95,6 +99,7 @@ EdgeSteer uses strict JSON. Objects marked with `deny_unknown_fields` reject mis
       "address": "1.1.1.1:443",
       "url": "https://cloudflare-dns.com/dns-query",
       "timeout_ms": 2800,
+      "plugin": "cloudflare-preferred",
       "fallback": "local-fallback"
     },
     {
@@ -107,13 +112,14 @@ EdgeSteer uses strict JSON. Objects marked with `deny_unknown_fields` reject mis
 }
 ```
 
-Declaration order is part of the policy. Keep `local-keyword` before `cn-preferred` and `overseas-preferred` so `b2c`, `mi`, and `local` reach the real local DNS first. Every other branch starts with `cloudflare-preferred`, so a Cloudflare answer from either Tencent or Cloudflare DoH goes through the same range check and preferred-address rewrite.
+Every request begins at `entry: local-keyword`; declaration order does not participate in runtime matching priority. A layer with `match` queries its resolver only when the filter matches. A miss follows `next`; only a resolver network or protocol failure follows `fallback`. The example attaches `cloudflare-preferred` to every public DoH layer, so successful answers from either Tencent or Cloudflare go through the same range check and preferred-address rewrite.
 
 `local-keyword` uses `contains`, a literal substring match like sing-box `domain_keyword`; `mi` therefore matches any domain containing those two characters. Change that layer's `mode` to `label` if only a complete DNS label should match, such as the `mi` in `work.be.mi.com`.
 
-- `geosite-cn`, from the `sing-geosite` `rule-set` branch, uses Tencent DoH first. A network or protocol failure then tries Cloudflare DoH, then dynamic local DNS.
-- `geosite-geolocation-!cn` is the set of known overseas domains. Its `!` is URL-encoded as `%21`; it uses Cloudflare DoH first, then dynamic local DNS.
-- A domain matching neither rule set (and every multi-question packet) starts at `entry: preferred`: preferred interceptor → Tencent DoH → Cloudflare DoH → dynamic local DNS.
+- A `local-keyword` match uses dynamic local DNS; a miss follows `next: cn-preferred`.
+- `geosite-cn`, from the `sing-geosite` `rule-set` branch, uses Tencent DoH in `cn-preferred`; only a network or protocol failure then tries Cloudflare DoH.
+- `geosite-geolocation-!cn` is the set of known overseas domains. Its `!` is URL-encoded as `%21`. It is reached only after `cn-preferred` misses, then uses Cloudflare DoH and falls back to dynamic local DNS only on failure.
+- A domain matching neither rule set follows both `next` links to `preferred`: Tencent DoH → Cloudflare DoH → dynamic local DNS. A multi-question packet has no single name, skips every filtered layer, and follows the same default chain.
 - `geosite-geolocation-!cn` is not a set of every non-Chinese domain. A domain not included in, or not yet loaded from, that set does not get misclassified as overseas; it follows the default chain above.
 
 `local` reads real upstreams from the operating system's network DNS configuration. It does not call the system resolver and does not accept `address`. On macOS it enumerates non-tunnel SystemConfiguration services, skipping virtual `utun`/`ppp`/`tun` interfaces; when a physical service has only loopback or listener DNS configured, it reads that service's current IPv4 DNS from DHCP option 6. Linux uses systemd-resolved's real `resolv.conf` when present, otherwise `/etc/resolv.conf`; Windows reads DNS settings from enabled adapters. EdgeSteer sends DNS wire queries directly to the discovered numeric addresses and filters loopback, unspecified, multicast, IPv6 link-local, duplicate, and listener addresses.
@@ -127,11 +133,11 @@ On a DHCP macOS network, `local` can still obtain the current physical-service D
 | `listener.address` | UDP/TCP listen address. Default: `127.0.0.1:53`. |
 | `listener.allow_remote` | Must be explicitly `true` for a non-loopback listener; default: `false`. |
 | `cloudflare.range_refresh_secs` | Refresh period for official Cloudflare ranges; must be greater than zero. Failed refreshes keep the active list. |
-| `request_timeout_ms` | Total deadline for a DNS request across the fallback chain. |
-| `entry` | Layer tag used without a domain keyword or rule-set match and for multi-question packets. |
+| `request_timeout_ms` | Total deadline for a DNS request across the resolver graph. |
+| `entry` | Layer tag at which every DNS request begins. |
 | `plugins` | Statically built-in plugin definitions. Tags must be unique. |
 | `rule_sets` | Optional local or remote sing-box SRS domain rule sets. Tags must be unique. |
-| `layers` | Resolver/interceptor nodes. Tags must be unique, and declaration order decides domain-match precedence. |
+| `layers` | Resolver nodes. Tags must be unique; `next` and `fallback` define request flow. |
 
 ## Layer types
 
@@ -142,9 +148,8 @@ On a DHCP macOS network, `local` can still obtain the current physical-service D
 | `doh` | `address`, `url` | DNS over HTTPS. `address` is the fixed numeric bootstrap; the `url` hostname supplies SNI, Host, and certificate validation. |
 | `dot` | `address`, `server_name` | DNS over TLS with mandatory certificate-name verification. |
 | `local` | None | Dynamically reads system network DNS and tries its discovered UDP/TCP upstreams in order. `timeout_ms` and `refresh_secs` are optional. |
-| `interceptor` | `plugin`, `fallback` | Sends no network request; runs the built-in plugin after a downstream layer succeeds. |
 
-Every network layer may set `fallback` and `timeout_ms`. `local` can also set `refresh_secs`, which defaults to 30 seconds. Fallback references must exist and the graph cannot contain cycles. Fixed network addresses cannot use port 0 or overlap the listener, including wildcard-address overlap.
+Every resolver layer may set an optional `plugin`; it runs after a successful DNS response and before the response reaches the client. A layer with a non-empty `match` must set `next` for requests that do not match. Every resolver layer may set `fallback` and `timeout_ms`; `local` can also set `refresh_secs`, which defaults to 30 seconds. `next` and `fallback` references must exist, and their combined graph cannot contain cycles. Fixed network addresses cannot use port 0 or overlap the listener, including wildcard-address overlap.
 
 ### DoH constraints
 
@@ -167,7 +172,7 @@ DoT connects to `address` and uses `server_name` for TLS SNI and certificate ver
 
 Discovery runs at startup and then every `refresh_secs`; when a process has more than one `local` layer, the shortest interval wins. A local query tries cached addresses in order and retries a `TC=1` UDP response over TCP to the same address. After an address has a network or protocol failure, EdgeSteer immediately rediscovers system DNS within the remaining request deadline and appends newly found addresses to that request's candidates. A valid DNS response, including `SERVFAIL`, does not retry or fall back.
 
-`local` only accepts `timeout_ms`, `refresh_secs`, `fallback`, and `match`; `address`, `url`, `server_name`, and `plugin` are rejected. Dynamic means reading current system and DHCP network state rather than calling the libc resolver, so it does not itself enter the EdgeSteer listener or pin a historical DNS address.
+`local` only accepts `timeout_ms`, `refresh_secs`, `next`, `fallback`, `match`, and `plugin`; `address`, `url`, and `server_name` are rejected. Dynamic means reading current system and DHCP network state rather than calling the libc resolver, so it does not itself enter the EdgeSteer listener or pin a historical DNS address.
 
 ## sing-box SRS domain rule sets
 
@@ -190,9 +195,16 @@ Discovery runs at startup and then every `refresh_secs`; when a process has more
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30,
+      "next": "default",
       "match": {
         "rule_sets": ["geosite-private"]
       }
+    },
+    {
+      "tag": "default",
+      "type": "local",
+      "timeout_ms": 1800,
+      "refresh_secs": 30
     }
   ]
 }
@@ -225,13 +237,13 @@ A layer may declare `match`:
 - `contains` is explicit literal substring matching. It is not a regular-expression mode.
 - `rule_sets` references top-level rule-set tags. Keywords and rule sets within one `match` are alternatives: either can select the layer. A not-yet-loaded set, or one without a previous successful version after a failed refresh, does not match.
 - Empty, unknown, or duplicate keyword/rule-set references are rejected.
-- For a single question, the first layer with a matching keyword or rule set in declaration order wins; otherwise `entry` is used.
-- Execution starts at the selected layer and follows only its fallback chain. A direct rule on Tencent or local skips an earlier preferred interceptor; put the match on the interceptor if the response must still be optimized.
-- Multi-question packets always start at `entry` so one packet is not split across providers.
+- Every request begins at `entry`. A layer with `match` queries its resolver only when a single-question keyword or rule-set filter matches; a miss jumps directly to `next` without sending DNS traffic.
+- `next` and `fallback` have different meanings: `next` is a filter miss, while `fallback` is only for connection, TLS, HTTP, malformed-response, or response-correlation failure. Valid `NXDOMAIN`, NODATA, `SERVFAIL`, and `REFUSED` responses terminate the chain.
+- Multi-question packets have no unambiguous QNAME, so they skip every filtered layer and follow `next` to the first unfiltered resolver. One packet is never split across providers.
 
 ## Preferred plugin and optimizer
 
-The available plugin type is `cloudflare_preferred`. It is referenced only by an `interceptor` layer:
+The available plugin type is `cloudflare_preferred`. Any resolver layer may reference it with `plugin`; it runs after the resolver succeeds and before the response reaches the client:
 
 ```json
 {
@@ -276,8 +288,8 @@ This enables strict mode: startup ignores static `preferred`, and a failed or em
 
 The optimizer samples IP or CIDR candidates; it runs `probes_per_candidate` full TCP, TLS, and HTTP probes for every candidate, rejects it if any attempt fails, and requires a 2xx response with `server: cloudflare`. It ranks successful candidates by median latency plus half of their tail latency, preventing a single lucky or highly jittery result from winning. IPv4 and IPv6 are selected independently; in strict mode, a family without a qualified candidate does not retain its previous value.
 
-The interceptor rewrites only when all relevant addresses are Cloudflare addresses. Mixed answers, non-Cloudflare addresses, missing preferred values, and responses without rewriteable records are returned unchanged. A rewrite sets TTL to `rewrite_ttl_secs` and clears DNSSEC authentication state.
+The plugin rewrites only when all relevant addresses are Cloudflare addresses. Mixed answers, non-Cloudflare addresses, missing preferred values, and responses without rewriteable records are returned unchanged. A rewrite sets TTL to `rewrite_ttl_secs` and clears DNSSEC authentication state.
 
 ## Validation checklist
 
-`--check-config` validates JSON syntax, unknown fields, unique non-empty tags, entry/fallback/plugin/rule-set references, fallback cycles, listener safety, network addresses and timeouts, DoH URL/port, DoT server name, keyword rules, SRS source fields, and optimizer parameters. Static Cloudflare preferred addresses are also checked against the active ranges.
+`--check-config` validates JSON syntax, unknown fields, unique non-empty tags, entry/next/fallback/plugin/rule-set references, cycles in the combined `next + fallback` graph, `next` on filtered layers, listener safety, network addresses and timeouts, DoH URL/port, DoT server name, keyword rules, SRS source fields, and optimizer parameters. Static Cloudflare preferred addresses are also checked against the active ranges.

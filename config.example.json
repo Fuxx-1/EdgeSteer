@@ -7,7 +7,7 @@
     "range_refresh_secs": 86400
   },
   "request_timeout_ms": 8000,
-  "entry": "preferred",
+  "entry": "local-keyword",
   "rule_sets": [
     {
       "tag": "geosite-cn",
@@ -82,6 +82,7 @@
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30,
+      "next": "cn-preferred",
       "match": {
         "mode": "contains",
         "keywords": ["b2c", "mi", "local"]
@@ -89,34 +90,37 @@
     },
     {
       "tag": "cn-preferred",
-      "type": "interceptor",
+      "type": "doh",
+      "address": "120.53.53.53:443",
+      "url": "https://doh.pub/dns-query",
+      "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "fallback": "tencent-doh",
+      "next": "overseas-preferred",
+      "fallback": "cloudflare-doh",
       "match": {
         "rule_sets": ["geosite-cn"]
       }
     },
     {
       "tag": "overseas-preferred",
-      "type": "interceptor",
+      "type": "doh",
+      "address": "1.1.1.1:443",
+      "url": "https://cloudflare-dns.com/dns-query",
+      "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "fallback": "cloudflare-doh",
+      "next": "preferred",
+      "fallback": "local",
       "match": {
         "rule_sets": ["geosite-geolocation-not-cn"]
       }
     },
     {
       "tag": "preferred",
-      "type": "interceptor",
-      "plugin": "cloudflare-preferred",
-      "fallback": "tencent-doh"
-    },
-    {
-      "tag": "tencent-doh",
       "type": "doh",
       "address": "120.53.53.53:443",
       "url": "https://doh.pub/dns-query",
       "timeout_ms": 2800,
+      "plugin": "cloudflare-preferred",
       "fallback": "cloudflare-doh"
     },
     {
@@ -125,6 +129,7 @@
       "address": "1.1.1.1:443",
       "url": "https://cloudflare-dns.com/dns-query",
       "timeout_ms": 2800,
+      "plugin": "cloudflare-preferred",
       "fallback": "local"
     },
     {

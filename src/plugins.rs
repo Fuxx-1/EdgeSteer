@@ -23,10 +23,10 @@ enum AddressFamily {
     Ipv6,
 }
 
-/// Applies a configured built-in response interceptor. The configuration only
+/// Applies a configured built-in response plugin. The configuration only
 /// names statically compiled plugins; it never loads executable code or a
 /// dynamic library from the configuration file.
-pub fn intercept_response(
+pub fn apply_response_plugin(
     plugin: &PluginConfig,
     message: &mut Message,
     ranges: &[IpNet],
@@ -270,7 +270,7 @@ mod tests {
             ipv6: None,
         };
 
-        assert!(intercept_response(
+        assert!(apply_response_plugin(
             &plugin(),
             &mut message,
             &ranges(),
@@ -304,7 +304,7 @@ mod tests {
             ipv6: None,
         };
 
-        assert!(!intercept_response(
+        assert!(!apply_response_plugin(
             &plugin(),
             &mut message,
             &ranges(),
@@ -330,7 +330,7 @@ mod tests {
             ipv6: None,
         };
 
-        assert!(intercept_response(
+        assert!(apply_response_plugin(
             &plugin(),
             &mut message,
             &ranges(),
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn no_preferred_address_is_a_successful_no_op() {
         let mut message = Message::new();
-        assert!(!intercept_response(
+        assert!(!apply_response_plugin(
             &plugin(),
             &mut message,
             &ranges(),
