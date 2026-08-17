@@ -2,40 +2,38 @@
 
 [English](architecture.md) | [中文](../zh/architecture.md) | [Back to English README](README.md)
 
-EdgeSteer is not a string heuristic that replaces addresses when a domain looks like Cloudflare. It sends each DNS request through a validated resolver fallback chain, then applies a constrained response interceptor. This covers sites hosted on Cloudflare without Cloudflare-related names and avoids rewriting non-Cloudflare answers.
+EdgeSteer is not a string heuristic that replaces addresses when a domain looks like Cloudflare. It sends every DNS request through one validated resolver graph, then applies any response plugin attached to the resolver that succeeds. This covers sites hosted on Cloudflare without Cloudflare-related names and avoids rewriting non-Cloudflare answers.
 
 ## System shape
 
 ```mermaid
 flowchart TB
     C["DNS client request"] --> P["Parse and validate"]
-    P --> R["Select start by domain rule"]
-    R -->|"b2c / mi / local"| K["Dynamic system DNS upstreams"]
-    R -->|"geosite-cn"| CN["cn-preferred<br/>preferred interceptor"]
-    R -->|"geosite-geolocation-!cn"| OS["overseas-preferred<br/>preferred interceptor"]
-    R -->|"unmatched / multi-question"| DF["preferred<br/>preferred interceptor"]
-    CN --> T["Tencent DoH"]
-    DF --> T
-    OS --> D["Cloudflare DoH"]
-    T -. "network/protocol failure" .-> D
-    D -. "network/protocol failure" .-> L["Dynamic system DNS upstreams"]
-    T -. "successful response" .-> W["Validate and rewrite"]
-    D -. "successful response" .-> W
-    W --> O["Return to client"]
-    L --> O
+    P --> E["entry: local-keyword"]
+    E -->|"match"| K["Dynamic system DNS upstreams"]
+    E -->|"miss: next"| CN["cn-preferred<br/>Tencent DoH + plugin"]
+    CN -->|"match: success"| O["Run plugin and return"]
+    CN -->|"miss: next"| OS["overseas-preferred<br/>Cloudflare DoH + plugin"]
+    CN -. "failure: fallback" .-> D["Cloudflare DoH + plugin"]
+    OS -->|"match: success"| O
+    OS -->|"miss: next"| DF["preferred<br/>Tencent DoH + plugin"]
+    OS -. "failure: fallback" .-> L["Dynamic system DNS upstreams"]
+    DF -. "failure: fallback" .-> D
+    D -. "failure: fallback" .-> L
     K --> O
+    L --> O
 ```
 
-Every layer is a node and its `fallback` points to the next node. The JSON describes a graph, but execution follows one validated, acyclic successor chain. Keywords and SRS domain rule sets choose the start; they do not duplicate a query across resolvers. The example order is `local-keyword`, `cn-preferred`, `overseas-preferred`, then `preferred`: local names go straight to dynamic local DNS, China uses Tencent first, known overseas domains use Cloudflare first, and unmatched domains retain the full Tencent → Cloudflare → local fallback.
+Every layer is a resolver node. `entry` is the only start, `next` is evaluated only after a filter miss, and `fallback` is evaluated only after that resolver's network or protocol failure. The JSON describes a graph, but execution follows one validated, acyclic path. Keywords and SRS domain rule sets never select a global start and never duplicate a query across resolvers. In the example, local names use dynamic local DNS, China uses Tencent first, known overseas domains use Cloudflare first, and unmatched domains continue through the default Tencent → Cloudflare → local path.
 
 ## Component responsibilities
 
 | Module | Responsibility |
 | --- | --- |
 | `src/dns.rs` | UDP/TCP listeners, request parsing, request deadline, layer execution, upstream correlation checks, and response encoding. |
-| `src/config.rs` | Strict JSON parsing, field constraints, layer/plugin/rule-set references, acyclic fallback validation, domain matching, and DoH/DoT validation. |
+| `src/config.rs` | Strict JSON parsing, field constraints, layer/plugin/rule-set references, acyclic `next + fallback` graph validation, domain matching, and DoH/DoT validation. |
 | `src/local_dns.rs` | Discovers local upstreams from system network configuration, filters loopback/self addresses, refreshes periodically, and rediscovers after local failures. |
-| `src/plugins.rs` | Statically built-in interceptors. `cloudflare_preferred` rewrites A, AAAA, HTTPS/SVCB hints and clears DNSSEC state. |
+| `src/plugins.rs` | Statically built-in response plugins. `cloudflare_preferred` rewrites A, AAAA, HTTPS/SVCB hints and clears DNSSEC state. |
 | `src/optimizer.rs` | TCP, TLS, and HTTP probes for Cloudflare candidates; chooses the fastest IPv4 and IPv6 independently. |
 | `src/ranges.rs` | Built-in Cloudflare ranges at startup and periodic refresh from official `ips-v4` and `ips-v6` endpoints; failed refreshes keep the current list. |
 | `src/rule_sets.rs` | Native domain-rule loading for sing-box SRS v1–v5, with local/remote refresh and last-good retention. |
@@ -48,18 +46,18 @@ Every layer is a node and its `fallback` points to the next node. The JSON descr
 
 1. The listener receives a UDP datagram or TCP length-prefixed frame. UDP work is limited to 128 in-flight permits; excess bursts are dropped so clients can retry.
 2. Only DNS queries are accepted. Malformed packets, DNS responses received on the listener, and unparseable requests are discarded.
-3. The request reads one `RuntimeConfig` snapshot, current Cloudflare ranges, and loaded rule sets. A single-question request provides its QNAME; a multi-question request uses `entry` directly.
-4. For one question, the first matching keyword or SRS rule set in `layers` declaration order selects the start. Without a match, execution starts at `entry`. A selected layer follows only its own `fallback` chain.
+3. The request reads one `RuntimeConfig` snapshot, current Cloudflare ranges, and loaded rule sets. It always begins at `entry`. A single-question request provides its QNAME; a multi-question request has no single name.
+4. A layer with an empty `match` applies immediately. A filtered layer applies only when its single-question keyword or SRS rule-set filter matches. A miss follows `next` without querying that resolver; multi-question packets skip filtered layers in the same way.
 5. Network layers use both a global request deadline and a per-layer timeout. `local` selects cached system-DNS addresses in order. A truncated UDP response is retried over TCP against the same endpoint.
 6. An upstream response must match transaction ID, QR/message type, opcode, and question. DoH also requires a successful HTTP status, a non-empty body, and `application/dns-message`.
-7. After a network layer succeeds, interceptors run in reverse entry order. `cloudflare_preferred` rewrites only when all relevant addresses are in the active Cloudflare ranges; no rewrite is a successful no-op.
-8. If every network layer fails, EdgeSteer creates a `SERVFAIL` response containing the original questions rather than forwarding malformed or mismatched bytes.
+7. After a resolver succeeds, its optional response plugin runs. `cloudflare_preferred` rewrites only when all relevant addresses are in the active Cloudflare ranges; no rewrite is a successful no-op.
+8. If every applicable resolver fails, EdgeSteer creates a `SERVFAIL` response containing the original questions rather than forwarding malformed or mismatched bytes.
 
-## Fallback and response semantics
+## Next, fallback, and response semantics
 
-Fallback means that the current layer could not provide an acceptable DNS wire response: connection timeout, TLS or HTTP failure, wrong Content-Type, empty body, malformed DNS, or failed correlation checks. A valid DNS response ends the chain, including `NXDOMAIN`, NODATA, `SERVFAIL`, and `REFUSED`. This avoids changing valid answers because providers disagree and avoids sending the same query to more providers.
+`next` means a layer filter did not match, so that resolver is not queried. Fallback means that the current resolver could not provide an acceptable DNS wire response: connection timeout, TLS or HTTP failure, wrong Content-Type, empty body, malformed DNS, or failed correlation checks. A valid DNS response ends the chain, including `NXDOMAIN`, NODATA, `SERVFAIL`, and `REFUSED`. This avoids changing valid answers because providers disagree and avoids sending the same query to more providers.
 
-An interceptor does not synthesize a complete DNS answer. It can only change allowed records after a downstream resolver returns a valid response. Rewriting clears `AD`, EDNS `DO`, and RRSIG records so modified data is not presented as DNSSEC-authenticated.
+A response plugin does not synthesize a complete DNS answer. It can only change allowed records after its attached resolver returns a valid response. Rewriting clears `AD`, EDNS `DO`, and RRSIG records so modified data is not presented as DNSSEC-authenticated.
 
 ## Cloudflare detection and optimization
 

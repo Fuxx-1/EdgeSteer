@@ -102,17 +102,22 @@ impl FileConfig {
             .map(|layer| (layer.tag.as_str(), layer))
             .collect();
         for layer in &self.layers {
-            if let Some(fallback) = layer.fallback.as_deref() {
-                if !layers_by_tag.contains_key(fallback) {
-                    bail!(
-                        "layer {:?} fallback {:?} does not exist",
-                        layer.tag,
-                        fallback
-                    );
+            for (edge, target) in [
+                ("next", layer.next.as_deref()),
+                ("fallback", layer.fallback.as_deref()),
+            ] {
+                let Some(target) = target else {
+                    continue;
+                };
+                if target.trim().is_empty() {
+                    bail!("layer {:?} {edge} cannot be empty", layer.tag);
+                }
+                if !layers_by_tag.contains_key(target) {
+                    bail!("layer {:?} {edge} {:?} does not exist", layer.tag, target);
                 }
             }
         }
-        validate_fallback_chains(&layers_by_tag)?;
+        validate_layer_graph(&layers_by_tag)?;
         Ok(())
     }
 
@@ -128,33 +133,6 @@ impl FileConfig {
         self.rule_sets.iter().find(|rule_set| rule_set.tag == tag)
     }
 
-    /// For a single-question request, the first declared matching layer is
-    /// selected directly. Otherwise the configured entry layer is used.
-    pub fn select_layer(&self, domain: Option<&str>) -> &str {
-        self.select_layer_with_rule_sets(domain, |_, _| false)
-    }
-
-    /// For a single-question request, the first declared layer whose keyword
-    /// or loaded rule-set matcher succeeds is selected directly. Otherwise
-    /// the configured entry layer is used.
-    pub fn select_layer_with_rule_sets<F>(&self, domain: Option<&str>, rule_set_matches: F) -> &str
-    where
-        F: Fn(&str, &str) -> bool,
-    {
-        domain
-            .and_then(|domain| {
-                self.layers
-                    .iter()
-                    .find(|layer| {
-                        layer
-                            .matcher
-                            .matches_with_rule_sets(domain, &rule_set_matches)
-                    })
-                    .map(|layer| layer.tag.as_str())
-            })
-            .unwrap_or(&self.entry)
-    }
-
     pub fn cloudflare_preferred_plugins(&self) -> impl Iterator<Item = &PluginConfig> {
         self.plugins
             .iter()
@@ -162,17 +140,44 @@ impl FileConfig {
     }
 }
 
-fn validate_fallback_chains(layers_by_tag: &HashMap<&str, &LayerConfig>) -> Result<()> {
-    for start in layers_by_tag.keys() {
-        let mut visited = HashSet::new();
-        let mut current = Some(*start);
-        while let Some(tag) = current {
-            if !visited.insert(tag) {
-                bail!("fallback cycle detected at layer {tag:?}");
+fn validate_layer_graph(layers_by_tag: &HashMap<&str, &LayerConfig>) -> Result<()> {
+    let mut completed = HashSet::new();
+
+    for start in layers_by_tag.keys().copied() {
+        if completed.contains(start) {
+            continue;
+        }
+
+        let mut active = HashSet::new();
+        let mut stack = vec![(start, false)];
+        while let Some((tag, exiting)) = stack.pop() {
+            if exiting {
+                active.remove(tag);
+                completed.insert(tag);
+                continue;
             }
-            current = layers_by_tag
+            if completed.contains(tag) {
+                continue;
+            }
+            if !active.insert(tag) {
+                bail!("layer graph cycle detected at layer {tag:?}");
+            }
+
+            let layer = layers_by_tag
                 .get(tag)
-                .and_then(|layer| layer.fallback.as_deref());
+                .expect("validated graph tag is present");
+            stack.push((tag, true));
+            for successor in [layer.next.as_deref(), layer.fallback.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if active.contains(successor) {
+                    bail!("layer graph cycle detected at layer {successor:?}");
+                }
+                if !completed.contains(successor) {
+                    stack.push((successor, false));
+                }
+            }
         }
     }
     Ok(())
@@ -420,6 +425,11 @@ pub struct LayerConfig {
     pub tag: String,
     #[serde(rename = "type")]
     pub kind: LayerType,
+    /// The layer to evaluate when this layer's domain filter does not match.
+    #[serde(default)]
+    pub next: Option<String>,
+    /// The layer to evaluate when this resolver has a transport or protocol
+    /// failure. A valid DNS response always terminates the chain.
     #[serde(default)]
     pub fallback: Option<String>,
     #[serde(default, rename = "match")]
@@ -438,7 +448,7 @@ pub struct LayerConfig {
     /// Required for a DoT layer so certificate verification has an SNI name.
     #[serde(default)]
     pub server_name: Option<String>,
-    /// Required for an interceptor layer.
+    /// Optional built-in response plugin applied after this resolver succeeds.
     #[serde(default)]
     pub plugin: Option<String>,
 }
@@ -463,16 +473,31 @@ impl LayerConfig {
         rule_set_tags: &HashSet<&str>,
     ) -> Result<()> {
         self.matcher.validate(&self.tag, rule_set_tags)?;
+        if !self.matcher.is_empty()
+            && self
+                .next
+                .as_deref()
+                .is_none_or(|next| next.trim().is_empty())
+        {
+            bail!(
+                "layer {:?} has match rules and requires next for requests that do not match",
+                self.tag
+            );
+        }
+        if let Some(plugin) = self.plugin.as_deref() {
+            if plugin.trim().is_empty() {
+                bail!("layer {:?} plugin cannot be empty", self.tag);
+            }
+            if !plugin_tags.contains(plugin) {
+                bail!("layer {:?} references unknown plugin {plugin:?}", self.tag);
+            }
+        }
         match self.kind {
             LayerType::Udp | LayerType::Tcp => {
                 self.validate_network(listener)?;
-                if self.refresh_secs.is_some()
-                    || self.url.is_some()
-                    || self.server_name.is_some()
-                    || self.plugin.is_some()
-                {
+                if self.refresh_secs.is_some() || self.url.is_some() || self.server_name.is_some() {
                     bail!(
-                        "layer {:?} is {:?}; refresh_secs, url, server_name, and plugin are not valid",
+                        "layer {:?} is {:?}; refresh_secs, url, and server_name are not valid",
                         self.tag,
                         self.kind
                     );
@@ -480,11 +505,8 @@ impl LayerConfig {
             }
             LayerType::Dot => {
                 self.validate_network(listener)?;
-                if self.refresh_secs.is_some() || self.url.is_some() || self.plugin.is_some() {
-                    bail!(
-                        "DoT layer {:?} must not set refresh_secs, url, or plugin",
-                        self.tag
-                    );
+                if self.refresh_secs.is_some() || self.url.is_some() {
+                    bail!("DoT layer {:?} must not set refresh_secs or url", self.tag);
                 }
                 let server_name = self
                     .server_name
@@ -495,12 +517,9 @@ impl LayerConfig {
             }
             LayerType::Doh => {
                 self.validate_network(listener)?;
-                if self.refresh_secs.is_some()
-                    || self.server_name.is_some()
-                    || self.plugin.is_some()
-                {
+                if self.refresh_secs.is_some() || self.server_name.is_some() {
                     bail!(
-                        "DoH layer {:?} derives SNI from url and must not set refresh_secs, server_name, or plugin",
+                        "DoH layer {:?} derives SNI from url and must not set refresh_secs or server_name",
                         self.tag
                     );
                 }
@@ -515,40 +534,10 @@ impl LayerConfig {
                     );
                 }
             }
-            LayerType::Interceptor => {
-                if self.fallback.as_deref().is_none_or(str::is_empty) {
-                    bail!("interceptor layer {:?} requires fallback", self.tag);
-                }
-                let plugin = self
-                    .plugin
-                    .as_deref()
-                    .context("interceptor layer requires plugin")?;
-                if !plugin_tags.contains(plugin) {
-                    bail!(
-                        "interceptor layer {:?} references unknown plugin {plugin:?}",
-                        self.tag
-                    );
-                }
-                if self.address.is_some()
-                    || self.timeout_ms.is_some()
-                    || self.refresh_secs.is_some()
-                    || self.url.is_some()
-                    || self.server_name.is_some()
-                {
-                    bail!(
-                        "interceptor layer {:?} only accepts plugin, fallback, and match",
-                        self.tag
-                    );
-                }
-            }
             LayerType::Local => {
-                if self.address.is_some()
-                    || self.url.is_some()
-                    || self.server_name.is_some()
-                    || self.plugin.is_some()
-                {
+                if self.address.is_some() || self.url.is_some() || self.server_name.is_some() {
                     bail!(
-                        "local layer {:?} only accepts timeout_ms, refresh_secs, fallback, and match",
+                        "local layer {:?} only accepts timeout_ms, refresh_secs, next, fallback, match, and plugin",
                         self.tag
                     );
                 }
@@ -633,7 +622,6 @@ pub enum LayerType {
     Doh,
     Dot,
     Local,
-    Interceptor,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -644,12 +632,16 @@ pub struct KeywordMatch {
     #[serde(default)]
     pub keywords: Vec<String>,
     /// sing-box SRS rule-set tags. A matching rule set and a matching keyword
-    /// are alternatives, so either can select this layer.
+    /// are alternatives, so either can make this layer applicable.
     #[serde(default)]
     pub rule_sets: Vec<String>,
 }
 
 impl KeywordMatch {
+    pub fn is_empty(&self) -> bool {
+        self.keywords.is_empty() && self.rule_sets.is_empty()
+    }
+
     fn validate(&self, layer_tag: &str, rule_set_tags: &HashSet<&str>) -> Result<()> {
         if self
             .keywords
@@ -684,6 +676,18 @@ impl KeywordMatch {
 
     pub fn matches(&self, domain: &str) -> bool {
         self.matches_with_rule_sets(domain, &|_, _| false)
+    }
+
+    /// Empty match blocks apply to every request. A filtered layer needs one
+    /// unambiguous QNAME; multi-question packets therefore continue through
+    /// `next` until they reach an unfiltered layer.
+    pub fn applies_to_with_rule_sets(
+        &self,
+        domain: Option<&str>,
+        rule_set_matches: &impl Fn(&str, &str) -> bool,
+    ) -> bool {
+        self.is_empty()
+            || domain.is_some_and(|domain| self.matches_with_rule_sets(domain, rule_set_matches))
     }
 
     pub fn matches_with_rule_sets(
@@ -854,7 +858,7 @@ mod tests {
     const CONFIG: &str = r#"
         {
           "listener": { "address": "127.0.0.1:53535" },
-          "entry": "preferred",
+          "entry": "local-keyword",
           "rule_sets": [
             {
               "tag": "cn",
@@ -876,6 +880,7 @@ mod tests {
               "tag": "local-keyword",
               "type": "local",
               "refresh_secs": 30,
+              "next": "cn-preferred",
               "match": {
                 "mode": "contains",
                 "keywords": ["b2c", "mi", "local"]
@@ -883,29 +888,30 @@ mod tests {
             },
             {
               "tag": "cn-preferred",
-              "type": "interceptor",
+              "type": "doh",
+              "address": "120.53.53.53:443",
+              "url": "https://doh.pub/dns-query",
               "plugin": "cloudflare-preferred",
-              "fallback": "tencent",
+              "fallback": "cf",
+              "next": "overseas-preferred",
               "match": { "rule_sets": ["cn"] }
             },
             {
               "tag": "overseas-preferred",
-              "type": "interceptor",
+              "type": "doh",
+              "address": "1.1.1.1:443",
+              "url": "https://cloudflare-dns.com/dns-query",
               "plugin": "cloudflare-preferred",
-              "fallback": "cf",
+              "fallback": "local-fallback",
+              "next": "preferred",
               "match": { "rule_sets": ["overseas"] }
             },
             {
               "tag": "preferred",
-              "type": "interceptor",
-              "plugin": "cloudflare-preferred",
-              "fallback": "tencent"
-            },
-            {
-              "tag": "tencent",
               "type": "doh",
               "address": "120.53.53.53:443",
               "url": "https://doh.pub/dns-query",
+              "plugin": "cloudflare-preferred",
               "fallback": "cf"
             },
             {
@@ -933,36 +939,62 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_json_layer_chain() {
+    fn parses_the_json_layer_graph() {
         let config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
         config.validate().expect("configuration validates");
-        assert_eq!(
-            config.select_layer(Some("printer.b2c.example.")),
-            "local-keyword"
+        assert_eq!(config.entry, "local-keyword");
+        assert!(
+            config
+                .layer("local-keyword")
+                .expect("local keyword layer")
+                .matcher
+                .applies_to_with_rule_sets(Some("printer.b2c.example."), &|_, _| false)
         );
-        assert_eq!(
-            config.select_layer_with_rule_sets(Some("www.example.cn."), |tag, domain| {
-                tag == "cn" && domain == "www.example.cn"
-            }),
-            "cn-preferred"
+        assert!(
+            !config
+                .layer("local-keyword")
+                .expect("local keyword layer")
+                .matcher
+                .applies_to_with_rule_sets(Some("www.example.cn."), &|_, _| false)
         );
-        assert_eq!(
-            config.select_layer_with_rule_sets(Some("www.example.com."), |tag, domain| {
-                tag == "overseas" && domain == "www.example.com"
-            }),
-            "overseas-preferred"
+        assert!(
+            config
+                .layer("cn-preferred")
+                .expect("China layer")
+                .matcher
+                .applies_to_with_rule_sets(Some("www.example.cn."), &|tag, domain| {
+                    tag == "cn" && domain == "www.example.cn"
+                })
         );
-        assert_eq!(config.select_layer(Some("www.example.test.")), "preferred");
-        assert_eq!(
-            config.select_layer(Some("www.cloudflare.com.")),
-            "preferred"
+        assert!(
+            config
+                .layer("preferred")
+                .expect("default layer")
+                .matcher
+                .applies_to_with_rule_sets(None, &|_, _| false)
         );
     }
 
     #[test]
-    fn rejects_a_fallback_cycle() {
+    fn rejects_a_mixed_next_and_fallback_cycle() {
         let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        layer_mut(&mut config, "local-fallback").fallback = Some("preferred".to_owned());
+        layer_mut(&mut config, "local-fallback").fallback = Some("local-keyword".to_owned());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_an_unknown_next_layer() {
+        let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        layer_mut(&mut config, "local-keyword").next = Some("missing".to_owned());
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn filtered_layers_require_a_next_layer() {
+        let mut config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
+        layer_mut(&mut config, "local-keyword").next = None;
+
         assert!(config.validate().is_err());
     }
 
@@ -1004,20 +1036,25 @@ mod tests {
         matcher.mode = KeywordMatchMode::Contains;
         matcher.keywords = vec!["video".to_owned()];
 
-        assert_eq!(
-            config.select_layer(Some("my-video.example.")),
-            "local-keyword"
-        );
+        assert!(matcher.matches("my-video.example."));
     }
 
     #[test]
-    fn selects_the_first_matching_sing_box_rule_set_layer() {
+    fn a_empty_match_applies_to_multi_question_requests() {
         let config: FileConfig = serde_json::from_str(CONFIG).expect("valid JSON");
-        assert_eq!(
-            config.select_layer_with_rule_sets(Some("www.example.cn."), |tag, domain| {
-                tag == "cn" && domain == "www.example.cn"
-            }),
-            "cn-preferred"
+        assert!(
+            config
+                .layer("preferred")
+                .expect("default layer")
+                .matcher
+                .applies_to_with_rule_sets(None, &|_, _| false)
+        );
+        assert!(
+            !config
+                .layer("cn-preferred")
+                .expect("China layer")
+                .matcher
+                .applies_to_with_rule_sets(None, &|_, _| false)
         );
     }
 
@@ -1033,42 +1070,58 @@ mod tests {
     }
 
     #[test]
-    fn example_configuration_routes_regions_through_the_interceptor() {
+    fn example_configuration_uses_one_entry_layer_graph() {
         let config: FileConfig = serde_json::from_str(include_str!("../config.example.json"))
             .expect("valid example JSON");
         config.validate().expect("example configuration validates");
 
-        assert_eq!(
-            config.select_layer(Some("work.be.mi.com.")),
-            "local-keyword"
+        assert_eq!(config.entry, "local-keyword");
+        assert!(
+            config
+                .layer("local-keyword")
+                .expect("local keyword layer")
+                .matcher
+                .applies_to_with_rule_sets(Some("work.be.mi.com."), &|_, _| false)
         );
-        assert_eq!(
-            config.select_layer_with_rule_sets(Some("www.qq.com."), |tag, _| tag == "geosite-cn"),
-            "cn-preferred"
+        assert!(
+            config
+                .layer("cn-preferred")
+                .expect("China layer")
+                .matcher
+                .applies_to_with_rule_sets(Some("www.qq.com."), &|tag, _| tag == "geosite-cn")
         );
-        assert_eq!(
-            config.select_layer_with_rule_sets(Some("www.google.com."), |tag, _| {
-                tag == "geosite-geolocation-not-cn"
-            }),
-            "overseas-preferred"
+        assert!(
+            config
+                .layer("overseas-preferred")
+                .expect("overseas layer")
+                .matcher
+                .applies_to_with_rule_sets(Some("www.google.com."), &|tag, _| {
+                    tag == "geosite-geolocation-not-cn"
+                })
         );
         assert_eq!(
             config
                 .layer("cn-preferred")
-                .and_then(|layer| layer.fallback.as_deref()),
-            Some("tencent-doh")
+                .and_then(|layer| layer.next.as_deref()),
+            Some("overseas-preferred")
         );
         assert_eq!(
             config
                 .layer("overseas-preferred")
-                .and_then(|layer| layer.fallback.as_deref()),
-            Some("cloudflare-doh")
+                .and_then(|layer| layer.next.as_deref()),
+            Some("preferred")
         );
         assert_eq!(
             config
                 .layer("preferred")
                 .and_then(|layer| layer.fallback.as_deref()),
-            Some("tencent-doh")
+            Some("cloudflare-doh")
+        );
+        assert_eq!(
+            config
+                .layer("cloudflare-doh")
+                .and_then(|layer| layer.plugin.as_deref()),
+            Some("cloudflare-preferred")
         );
         let optimizer = &config
             .plugin("cloudflare-preferred")

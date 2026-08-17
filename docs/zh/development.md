@@ -11,7 +11,7 @@ EdgeSteer 是 Rust 2024 项目，MSRV 为 Rust 1.85。文档、配置和源码�
 | `src/config.rs` | JSON schema、反序列化和配置校验。 |
 | `src/dns.rs` | UDP/TCP listener、DoH/DoT/UDP/TCP upstream 和响应校验。 |
 | `src/local_dns.rs` | macOS/Linux/Windows 系统网络 DNS 发现与刷新。 |
-| `src/plugins.rs` | builtin response interceptor。 |
+| `src/plugins.rs` | builtin 响应插件。 |
 | `src/optimizer.rs` | Cloudflare 优选探测。 |
 | `src/ranges.rs` | Cloudflare 网段加载和刷新。 |
 | `src/state.rs` | 运行时快照、DoH client 缓存与并发控制。 |
@@ -40,7 +40,7 @@ cp config.example.json "$HOME/edgesteer.json"
 cargo run --release -- --check-config
 ```
 
-测试不依赖 CI 访问 Cloudflare 或 Tencent。网络集成测试使用本地 fake UDP endpoint，其他 transport 的关键约束通过配置校验和纯函数单元测试覆盖，重点验证响应关联校验、fallback 顺序、关键词、SRS 域名规则、动态 local 缓存、拦截器改写和热重载。
+测试不依赖 CI 访问 Cloudflare 或 Tencent。网络集成测试使用本地 fake UDP endpoint，其他 transport 的关键约束通过配置校验和纯函数单元测试覆盖，重点验证统一 entry、`next` 与 `fallback` 的差异、响应关联校验、关键词、SRS 域名规则、动态 local 缓存、插件改写和热重载。
 
 ## 变更约定
 

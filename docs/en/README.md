@@ -5,36 +5,37 @@
 
 [English](README.md) | [中文](../../README.md)
 
-EdgeSteer is a local Rust DNS steering proxy for macOS, Linux, and Windows. It uses JSON to describe a multi-layer upstream fallback chain and a built-in interceptor that can replace verified Cloudflare addresses with the current preferred IP.
+EdgeSteer is a local Rust DNS steering proxy for macOS, Linux, and Windows. JSON defines a resolver graph that always begins at one entry: a filter miss follows `next`, a resolver transport or protocol failure follows `fallback`, and a built-in plugin can be attached to a successful resolver layer to replace verified Cloudflare addresses with the current preferred IP.
 
 It identifies Cloudflare from DNS response data, not from spelling. A site can be hosted on Cloudflare even when its domain and CNAME contain neither `cf` nor `cloudflare`; A, AAAA, HTTPS, and SVCB address data is checked against Cloudflare's published ranges. Mixed or unverified answers are left unchanged.
 
 ## How it works
 
-The sample routes by keyword and `sing-geosite` rule set:
+The sample evaluates one entry chain, layer by layer:
 
 ```mermaid
 flowchart TB
-    Client["DNS client"] --> Match["domain match"]
-    Match -->|"b2c / mi / local"| LocalKeyword["dynamic local DNS"]
-    Match -->|"geosite-cn"| CN["CF preferred interceptor"]
-    Match -->|"geosite-geolocation-!cn"| Overseas["CF preferred interceptor"]
-    Match -->|"unmatched / multi-question"| Default["CF preferred interceptor"]
-    CN --> Tencent["Tencent DoH"]
-    Default --> Tencent
-    Tencent --> CF["Cloudflare DoH"]
-    Overseas --> CF
-    CF --> LocalFallback["dynamic local DNS"]
+    Client["DNS client"] --> Entry["entry: local-keyword"]
+    Entry -->|"match: b2c / mi / local"| LocalKeyword["dynamic local DNS"]
+    Entry -->|"miss: next"| CN["cn-preferred: Tencent DoH + CF plugin"]
+    CN -->|"match: geosite-cn"| TencentResult["return rewritten or original answer"]
+    CN -->|"miss: next"| Overseas["overseas-preferred: CF DoH + CF plugin"]
+    CN -->|"failure: fallback"| CF["Cloudflare DoH + CF plugin"]
+    Overseas -->|"match"| OverseasResult["return rewritten or original answer"]
+    Overseas -->|"miss: next"| Default["preferred: Tencent DoH + CF plugin"]
+    Overseas -->|"failure: fallback"| LocalFallback["dynamic local DNS"]
+    Default -->|"failure: fallback"| CF
+    CF -->|"failure: fallback"| LocalFallback
 ```
 
-The concrete selection order is:
+Every request begins at `entry`; the sample chain behaves as follows:
 
-- `b2c`, `mi`, or `local` keyword → dynamic local DNS;
-- `geosite-cn` → preferred interceptor → Tencent DoH → Cloudflare DoH → dynamic local DNS;
-- `geosite-geolocation-!cn` → preferred interceptor → Cloudflare DoH → dynamic local DNS;
-- a domain not covered by either rule set (and multi-question packets) → preferred interceptor → Tencent DoH → Cloudflare DoH → dynamic local DNS.
+- A `local-keyword` match for `b2c`, `mi`, or `local` uses dynamic local DNS; a miss continues through `next`.
+- A `cn-preferred` match uses Tencent DoH with the Cloudflare-preferred plugin; only its resolver failure falls back to Cloudflare DoH with the same plugin.
+- A non-match continues to `overseas-preferred`, whose known-overseas match uses Cloudflare DoH with the plugin.
+- A further non-match reaches the default Tencent DoH → Cloudflare DoH → dynamic local DNS chain. Multi-question packets skip every filtered layer and follow `next` to the default layer.
 
-`geosite-geolocation-!cn` is not the complement of all Chinese domains: it only covers the overseas domains present in that rule set. Unknown domains therefore retain the full default fallback chain. Every branch that can use a preferred address begins with the interceptor. It lets the downstream upstream return a complete DNS response, then rewrites A, AAAA, and HTTPS/SVCB hints only when the relevant addresses are all verified as Cloudflare. Rewriting clears DNSSEC `AD`, `DO`, and RRSIG state.
+`geosite-geolocation-!cn` is not the complement of all Chinese domains: it only covers the overseas domains present in that rule set. Unknown domains therefore retain the full default fallback chain. The Cloudflare-preferred plugin runs only after its attached resolver returns a complete response, then rewrites A, AAAA, and HTTPS/SVCB hints only when the relevant addresses are all verified as Cloudflare. Rewriting clears DNSSEC `AD`, `DO`, and RRSIG state.
 
 The built-in optimizer probes Cloudflare addresses with TCP, TLS, and HTTP. A candidate must return a 2xx response with `server: cloudflare`; the fastest IPv4 and IPv6 are selected independently. This is a reachability and latency selector, not a bandwidth benchmark.
 
@@ -91,7 +92,7 @@ The Settings page can open the installed App at login through a user LaunchAgent
 
 ## Important boundaries
 
-- The configuration is strict JSON. Unknown fields are rejected; `entry`, layer, fallback, and plugin references must exist, and fallback chains cannot contain cycles.
+- The configuration is strict JSON. Unknown fields are rejected; `entry`, layer, `next`, `fallback`, and plugin references must exist, and the combined `next + fallback` graph cannot contain cycles.
 - `local` dynamically reads real network DNS and never calls the operating-system resolver. It filters loopback, listener, and virtual-tunnel DNS. When a macOS physical service points at the local listener, EdgeSteer reads that service's current DHCP option 6 DNS servers instead of saving or replaying old addresses.
 - Native UDP/TCP queries do not bypass sing-box TUN or transparent DNS interception. Routing direct access to the underlay DNS belongs in the outer proxy configuration.
 - Only network, TLS, HTTP, empty-body, malformed-DNS, or response-correlation failures enter fallback. Valid NXDOMAIN, NODATA, SERVFAIL, and REFUSED responses are returned immediately.

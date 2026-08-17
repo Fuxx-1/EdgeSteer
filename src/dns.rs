@@ -161,16 +161,8 @@ async fn query_layers(
 ) -> Result<Message> {
     let domain = (request.queries().len() == 1).then(|| request.queries()[0].name().to_utf8());
     let rule_sets = state.rule_sets.load_full();
-    let mut current = Some(
-        runtime
-            .config
-            .select_layer_with_rule_sets(domain.as_deref(), |tag, domain| {
-                rule_sets.matches(tag, runtime.config.rule_set(tag), domain)
-            })
-            .to_owned(),
-    );
+    let mut current = Some(runtime.config.entry.clone());
     let deadline = Instant::now() + Duration::from_millis(runtime.config.request_timeout_ms);
-    let mut interceptors = Vec::new();
     let mut last_error = None;
 
     while let Some(tag) = current {
@@ -178,53 +170,67 @@ async fn query_layers(
             runtime.config.layer(&tag).cloned().ok_or_else(|| {
                 anyhow!("layer {tag:?} disappeared from a validated configuration")
             })?;
-        current = layer.fallback.clone();
+        if !layer
+            .matcher
+            .applies_to_with_rule_sets(domain.as_deref(), &|tag, domain| {
+                rule_sets.matches(tag, runtime.config.rule_set(tag), domain)
+            })
+        {
+            let next = layer.next.clone().ok_or_else(|| {
+                anyhow!(
+                    "layer {:?} did not match the DNS request and has no next layer",
+                    layer.tag
+                )
+            })?;
+            debug!(layer = %layer.tag, next = %next, "DNS layer did not match; trying next layer");
+            current = Some(next);
+            continue;
+        }
 
-        match layer.kind {
-            LayerType::Interceptor => {
-                interceptors.push(layer);
+        match query_network_layer(packet, request, &layer, state, deadline).await {
+            Ok(mut response) => {
+                apply_layer_plugin(
+                    &layer,
+                    &mut response,
+                    runtime,
+                    ranges,
+                    state,
+                    domain.as_deref(),
+                );
+                return Ok(response);
             }
-            LayerType::Udp
-            | LayerType::Tcp
-            | LayerType::Doh
-            | LayerType::Dot
-            | LayerType::Local => {
-                let result = query_network_layer(packet, request, &layer, state, deadline).await;
-                match result {
-                    Ok(mut response) => {
-                        for interceptor in interceptors.iter().rev() {
-                            let plugin_tag = interceptor
-                                .plugin
-                                .as_deref()
-                                .expect("validated interceptor has a plugin");
-                            let plugin = runtime
-                                .config
-                                .plugin(plugin_tag)
-                                .expect("validated interceptor references a plugin");
-                            let preferred = runtime.preferred(plugin_tag).map(|preferred| {
-                                state.compatible_preferred(plugin, domain.as_deref(), preferred)
-                            });
-                            let changed = plugins::intercept_response(
-                                plugin,
-                                &mut response,
-                                ranges,
-                                preferred.as_ref(),
-                            );
-                            if changed {
-                                debug!(layer = %interceptor.tag, plugin = %plugin_tag, "rewrote DNS response through interceptor");
-                            }
-                        }
-                        return Ok(response);
-                    }
-                    Err(error) => {
-                        debug!(layer = %layer.tag, %error, "DNS layer failed; trying fallback");
-                        last_error = Some(error);
-                    }
-                }
+            Err(error) => {
+                debug!(layer = %layer.tag, %error, "DNS layer failed; trying fallback");
+                current = layer.fallback.clone();
+                last_error = Some(error);
             }
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow!("no network DNS layer is reachable from entry")))
+}
+
+fn apply_layer_plugin(
+    layer: &LayerConfig,
+    response: &mut Message,
+    runtime: &RuntimeConfig,
+    ranges: &[ipnet::IpNet],
+    state: &SharedState,
+    domain: Option<&str>,
+) {
+    let Some(plugin_tag) = layer.plugin.as_deref() else {
+        return;
+    };
+    let plugin = runtime
+        .config
+        .plugin(plugin_tag)
+        .expect("validated layer references a plugin");
+    let preferred = runtime
+        .preferred(plugin_tag)
+        .map(|preferred| state.compatible_preferred(plugin, domain, preferred));
+    let changed = plugins::apply_response_plugin(plugin, response, ranges, preferred.as_ref());
+    if changed {
+        debug!(layer = %layer.tag, plugin = %plugin_tag, "rewrote DNS response through layer plugin");
+    }
 }
 
 async fn query_network_layer(
@@ -273,7 +279,6 @@ async fn query_network_layer(
             validate_upstream_response(request, &bytes)
         }
         LayerType::Local => local_exchange(packet, request, layer, state, deadline).await,
-        LayerType::Interceptor => bail!("interceptor is not a network layer"),
     }
 }
 
@@ -538,17 +543,20 @@ fn is_dns_message_content_type(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{net::Ipv4Addr, str::FromStr};
 
     use hickory_proto::{
         op::Query,
-        rr::{Name, RecordType},
+        rr::{Name, RData, Record, RecordType, rdata::A},
     };
     use tokio::net::UdpSocket;
 
     use super::*;
     use crate::{
-        config::{FileConfig, KeywordMatch, LayerConfig},
+        config::{
+            FileConfig, KeywordMatch, KeywordMatchMode, LayerConfig, PluginConfig, PluginType,
+            PreferredConfig,
+        },
         state::AppState,
     };
 
@@ -570,10 +578,29 @@ mod tests {
         response
     }
 
+    fn response_with_cloudflare_a(request: &Message) -> Message {
+        let mut response = response_for(request);
+        response.add_answer(Record::from_rdata(
+            request.queries()[0].name().clone(),
+            300,
+            RData::A(A::from(Ipv4Addr::new(104, 16, 1, 1))),
+        ));
+        response
+    }
+
+    fn contains_match(keyword: &str) -> KeywordMatch {
+        KeywordMatch {
+            mode: KeywordMatchMode::Contains,
+            keywords: vec![keyword.to_owned()],
+            rule_sets: Vec::new(),
+        }
+    }
+
     fn udp_layer(tag: &str, address: SocketAddr, fallback: Option<&str>) -> LayerConfig {
         LayerConfig {
             tag: tag.to_owned(),
             kind: LayerType::Udp,
+            next: None,
             fallback: fallback.map(str::to_owned),
             matcher: KeywordMatch::default(),
             address: Some(address),
@@ -589,6 +616,7 @@ mod tests {
         LayerConfig {
             tag: tag.to_owned(),
             kind: LayerType::Local,
+            next: None,
             fallback: fallback.map(str::to_owned),
             matcher: KeywordMatch::default(),
             address: None,
@@ -608,6 +636,15 @@ mod tests {
                 udp_layer("first", first, Some("second")),
                 udp_layer("second", second, None),
             ],
+            ..FileConfig::default()
+        }
+    }
+
+    fn config_with_layers(entry: &str, layers: Vec<LayerConfig>) -> FileConfig {
+        FileConfig {
+            request_timeout_ms: 1_500,
+            entry: entry.to_owned(),
+            layers,
             ..FileConfig::default()
         }
     }
@@ -765,5 +802,329 @@ mod tests {
                 .is_err()
         );
         first_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn always_starts_from_entry_even_when_a_later_layer_matches() {
+        let entry = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let entry_address = entry.local_addr().unwrap();
+        let entry_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = entry.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            entry
+                .send_to(&response_for(&request).to_bytes().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+
+        let matched = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let matched_address = matched.local_addr().unwrap();
+        let mut matched_layer = udp_layer("matched", matched_address, None);
+        matched_layer.matcher = contains_match("example");
+        matched_layer.next = Some("entry".to_owned());
+        let config = config_with_layers(
+            "entry",
+            vec![udp_layer("entry", entry_address, None), matched_layer],
+        );
+        config.validate().unwrap();
+
+        let state = AppState::new(config, Vec::new());
+        let request = request();
+        let packet = request.to_bytes().unwrap();
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.id(), request.id());
+        let mut buffer = [0_u8; 512];
+        assert!(
+            timeout(Duration::from_millis(100), matched.recv_from(&mut buffer))
+                .await
+                .is_err()
+        );
+        entry_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_filter_miss_advances_to_next_without_querying_the_layer() {
+        let filtered = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let filtered_address = filtered.local_addr().unwrap();
+        let next = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let next_address = next.local_addr().unwrap();
+        let next_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = next.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            next.send_to(&response_for(&request).to_bytes().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+
+        let mut filtered_layer = udp_layer("filtered", filtered_address, None);
+        filtered_layer.matcher = contains_match("only-this");
+        filtered_layer.next = Some("next".to_owned());
+        let config = config_with_layers(
+            "filtered",
+            vec![filtered_layer, udp_layer("next", next_address, None)],
+        );
+        config.validate().unwrap();
+
+        let state = AppState::new(config, Vec::new());
+        let request = request();
+        let packet = request.to_bytes().unwrap();
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.id(), request.id());
+        let mut buffer = [0_u8; 512];
+        assert!(
+            timeout(Duration::from_millis(100), filtered.recv_from(&mut buffer))
+                .await
+                .is_err()
+        );
+        next_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_filter_hit_queries_its_own_resolver() {
+        let filtered = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let filtered_address = filtered.local_addr().unwrap();
+        let filtered_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = filtered.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            filtered
+                .send_to(&response_for(&request).to_bytes().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+
+        let next = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let next_address = next.local_addr().unwrap();
+        let mut filtered_layer = udp_layer("filtered", filtered_address, None);
+        filtered_layer.matcher = contains_match("example");
+        filtered_layer.next = Some("next".to_owned());
+        let config = config_with_layers(
+            "filtered",
+            vec![filtered_layer, udp_layer("next", next_address, None)],
+        );
+        config.validate().unwrap();
+
+        let state = AppState::new(config, Vec::new());
+        let request = request();
+        let packet = request.to_bytes().unwrap();
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.id(), request.id());
+        let mut buffer = [0_u8; 512];
+        assert!(
+            timeout(Duration::from_millis(100), next.recv_from(&mut buffer))
+                .await
+                .is_err()
+        );
+        filtered_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_resolver_failure_uses_fallback_not_next() {
+        let failed = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let failed_address = failed.local_addr().unwrap();
+        let failed_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (_, peer) = failed.recv_from(&mut buffer).await.unwrap();
+            failed.send_to(&[0_u8, 1], peer).await.unwrap();
+        });
+
+        let next = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let next_address = next.local_addr().unwrap();
+        let fallback = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let fallback_address = fallback.local_addr().unwrap();
+        let fallback_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = fallback.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            fallback
+                .send_to(&response_for(&request).to_bytes().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+
+        let mut failed_layer = udp_layer("filtered", failed_address, Some("fallback"));
+        failed_layer.matcher = contains_match("example");
+        failed_layer.next = Some("next".to_owned());
+        let config = config_with_layers(
+            "filtered",
+            vec![
+                failed_layer,
+                udp_layer("next", next_address, None),
+                udp_layer("fallback", fallback_address, None),
+            ],
+        );
+        config.validate().unwrap();
+
+        let state = AppState::new(config, Vec::new());
+        let request = request();
+        let packet = request.to_bytes().unwrap();
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.id(), request.id());
+        let mut buffer = [0_u8; 512];
+        assert!(
+            timeout(Duration::from_millis(100), next.recv_from(&mut buffer))
+                .await
+                .is_err()
+        );
+        failed_task.await.unwrap();
+        fallback_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn multi_question_packets_skip_filtered_layers_through_next() {
+        let filtered = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let filtered_address = filtered.local_addr().unwrap();
+        let next = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let next_address = next.local_addr().unwrap();
+        let next_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = next.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            next.send_to(&response_for(&request).to_bytes().unwrap(), peer)
+                .await
+                .unwrap();
+        });
+
+        let mut filtered_layer = udp_layer("filtered", filtered_address, None);
+        filtered_layer.matcher = contains_match("example");
+        filtered_layer.next = Some("next".to_owned());
+        let config = config_with_layers(
+            "filtered",
+            vec![filtered_layer, udp_layer("next", next_address, None)],
+        );
+        config.validate().unwrap();
+
+        let state = AppState::new(config, Vec::new());
+        let mut request = request();
+        request.add_query(Query::query(
+            Name::from_str("other.example.test.").unwrap(),
+            RecordType::AAAA,
+        ));
+        let packet = request.to_bytes().unwrap();
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.queries().len(), 2);
+        let mut buffer = [0_u8; 512];
+        assert!(
+            timeout(Duration::from_millis(100), filtered.recv_from(&mut buffer))
+                .await
+                .is_err()
+        );
+        next_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_layer_plugin_rewrites_a_successful_cloudflare_response() {
+        let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let upstream_address = upstream.local_addr().unwrap();
+        let upstream_task = tokio::spawn(async move {
+            let mut buffer = [0_u8; 512];
+            let (size, peer) = upstream.recv_from(&mut buffer).await.unwrap();
+            let request = Message::from_bytes(&buffer[..size]).unwrap();
+            upstream
+                .send_to(
+                    &response_with_cloudflare_a(&request).to_bytes().unwrap(),
+                    peer,
+                )
+                .await
+                .unwrap();
+        });
+
+        let mut layer = udp_layer("entry", upstream_address, None);
+        layer.plugin = Some("preferred".to_owned());
+        let config = FileConfig {
+            request_timeout_ms: 1_500,
+            entry: "entry".to_owned(),
+            plugins: vec![PluginConfig {
+                tag: "preferred".to_owned(),
+                kind: PluginType::CloudflarePreferred,
+                rewrite_ttl_secs: 60,
+                preferred: PreferredConfig {
+                    ipv4: Some(Ipv4Addr::new(104, 16, 99, 1)),
+                    ipv6: None,
+                },
+                optimizer: Default::default(),
+            }],
+            layers: vec![layer],
+            ..FileConfig::default()
+        };
+        config.validate().unwrap();
+
+        let state = AppState::new(config, vec!["104.16.0.0/12".parse().unwrap()]);
+        let request = request();
+        let packet = request.to_bytes().unwrap();
+        let runtime = state.runtime.load_full();
+        let ranges = state.cloudflare_ranges.load_full();
+        let response = query_layers(
+            &packet,
+            &request,
+            runtime.as_ref(),
+            ranges.as_slice(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            response.answers()[0].data(),
+            RData::A(A(address)) if *address == Ipv4Addr::new(104, 16, 99, 1)
+        ));
+        upstream_task.await.unwrap();
     }
 }

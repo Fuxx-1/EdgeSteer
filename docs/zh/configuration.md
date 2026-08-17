@@ -18,7 +18,7 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
     "range_refresh_secs": 86400
   },
   "request_timeout_ms": 8000,
-  "entry": "preferred",
+  "entry": "local-keyword",
   "rule_sets": [
     {
       "tag": "geosite-cn",
@@ -52,6 +52,7 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30,
+      "next": "cn-preferred",
       "match": {
         "mode": "contains",
         "keywords": ["b2c", "mi", "local"]
@@ -59,34 +60,37 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
     },
     {
       "tag": "cn-preferred",
-      "type": "interceptor",
+      "type": "doh",
+      "address": "120.53.53.53:443",
+      "url": "https://doh.pub/dns-query",
+      "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "fallback": "tencent-doh",
+      "next": "overseas-preferred",
+      "fallback": "cloudflare-doh",
       "match": {
         "rule_sets": ["geosite-cn"]
       }
     },
     {
       "tag": "overseas-preferred",
-      "type": "interceptor",
+      "type": "doh",
+      "address": "1.1.1.1:443",
+      "url": "https://cloudflare-dns.com/dns-query",
+      "timeout_ms": 2800,
       "plugin": "cloudflare-preferred",
-      "fallback": "cloudflare-doh",
+      "next": "preferred",
+      "fallback": "local-fallback",
       "match": {
         "rule_sets": ["geosite-geolocation-not-cn"]
       }
     },
     {
       "tag": "preferred",
-      "type": "interceptor",
-      "plugin": "cloudflare-preferred",
-      "fallback": "tencent-doh"
-    },
-    {
-      "tag": "tencent-doh",
       "type": "doh",
       "address": "120.53.53.53:443",
       "url": "https://doh.pub/dns-query",
       "timeout_ms": 2800,
+      "plugin": "cloudflare-preferred",
       "fallback": "cloudflare-doh"
     },
     {
@@ -95,6 +99,7 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
       "address": "1.1.1.1:443",
       "url": "https://cloudflare-dns.com/dns-query",
       "timeout_ms": 2800,
+      "plugin": "cloudflare-preferred",
       "fallback": "local-fallback"
     },
     {
@@ -107,13 +112,14 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
 }
 ```
 
-声明顺序是策略的一部分，不能把 `cn-preferred` 或 `overseas-preferred` 放在 `local-keyword` 前面：这样 `b2c`、`mi`、`local` 才会先命中真实本地 DNS。其余分支都先经过 `cloudflare-preferred`，所以无论最终命中腾讯还是 CF 的 Cloudflare 地址，都会经过同一套 Cloudflare 网段校验和优选改写。
+请求始终从 `entry: local-keyword` 开始，声明顺序不参与运行时的匹配优先级。每个带 `match` 的 layer 只有在过滤条件命中时才查询自己的 resolver；未命中沿 `next` 继续，resolver 的网络或协议失败才沿 `fallback` 继续。示例把 `cloudflare-preferred` 绑定在每个公网 DoH layer 上，因此无论成功响应来自腾讯还是 CF，都会经过同一套 Cloudflare 网段校验和优选改写。
 
 `local-keyword` 使用 `contains`，与 sing-box 的 `domain_keyword` 一样是字面子串匹配；因此 `mi` 会匹配任何含有这两个字符的域名。若只希望匹配完整 DNS label（例如 `work.be.mi.com` 中的 `mi`），将该层的 `mode` 改为 `label`。
 
-- `geosite-cn` 来自 `sing-geosite` 的 `rule-set` 分支，国内集合走 Tencent DoH；网络或协议失败后再尝试 Cloudflare DoH，最后才走动态 local。
-- `geosite-geolocation-!cn` 是已收录的海外域名集合；URL 中的 `!` 写为 `%21`。它直接走 Cloudflare DoH，失败后走动态 local。
-- 未命中任一规则集的域名（以及多 question 请求）从 `entry: preferred` 开始，即：优选拦截 → Tencent DoH → Cloudflare DoH → 动态 local。
+- `local-keyword` 命中时直连动态 local；未命中走 `next: cn-preferred`。
+- `geosite-cn` 来自 `sing-geosite` 的 `rule-set` 分支，国内集合在 `cn-preferred` 使用 Tencent DoH；网络或协议失败后才走 Cloudflare DoH。
+- `geosite-geolocation-!cn` 是已收录的海外域名集合；URL 中的 `!` 写为 `%21`。`cn-preferred` 未命中时才继续到该层，命中后使用 Cloudflare DoH，失败后走动态 local。
+- 未命中任一规则集的域名经过两个 `next` 进入 `preferred`，即 Tencent DoH → Cloudflare DoH → 动态 local。多 question 请求没有唯一域名，跳过所有带 `match` 的层后走同一默认链。
 - `geosite-geolocation-!cn` 不是“所有非国内域名”的集合。规则集尚未收录或尚未加载的域名不会误走海外分支，而是使用上述默认链。
 
 `local` 从操作系统的网络 DNS 配置读取真实上游，不调用系统 resolver，也不接受 `address`。macOS 枚举 SystemConfiguration 中非隧道网络服务（跳过 `utun`/`ppp`/`tun` 等虚拟接口）；当物理服务的配置 DNS 只有回环或 listener 地址时，改读同一服务 DHCP Option 6 中当前下发的 IPv4 DNS。Linux 读取 systemd-resolved 的真实 `resolv.conf`（存在时）或 `/etc/resolv.conf`，Windows 读取已启用网卡的 DNS 配置。EdgeSteer 对发现到的数值地址直接发送 DNS wire query；它会过滤回环、未指定、组播、IPv6 link-local、重复地址和自身 listener。
@@ -127,11 +133,11 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
 | `listener.address` | UDP/TCP 监听地址。默认 `127.0.0.1:53`。 |
 | `listener.allow_remote` | 非回环监听时必须显式为 `true`；默认 `false`。 |
 | `cloudflare.range_refresh_secs` | 官方 Cloudflare 网段刷新周期，必须大于 0。刷新失败保留当前网段。 |
-| `request_timeout_ms` | 单个 DNS 请求穿过整条 fallback 链的总 deadline。 |
-| `entry` | 没有域名关键词或规则集命中，或请求包含多个 question 时使用的 layer tag。 |
+| `request_timeout_ms` | 单个 DNS 请求穿过整张 resolver 图的总 deadline。 |
+| `entry` | 每个 DNS 请求都从这个 layer tag 开始。 |
 | `plugins` | 静态 builtin 插件配置列表。tag 必须唯一。 |
 | `rule_sets` | 可选的本地或远程 sing-box SRS 域名规则集。tag 必须唯一。 |
-| `layers` | resolver/interceptor 节点列表。tag 必须唯一，声明顺序还决定域名匹配的先后。 |
+| `layers` | resolver 节点列表。tag 必须唯一；`next` 和 `fallback` 定义请求流。 |
 
 ## Layer 类型
 
@@ -142,9 +148,8 @@ EdgeSteer 使用严格 JSON。每个带 `deny_unknown_fields` 的对象都会拒
 | `doh` | `address`, `url` | HTTPS DNS。`address` 是固定数值 bootstrap；`url` 主机名用于 SNI、Host 和证书校验。 |
 | `dot` | `address`, `server_name` | DNS over TLS，必须校验证书名称。 |
 | `local` | 无 | 动态读取系统网络 DNS，按顺序使用发现到的 UDP/TCP 上游。可设置 `timeout_ms` 和 `refresh_secs`。 |
-| `interceptor` | `plugin`, `fallback` | 不发送网络请求，在后继 layer 成功后执行 builtin plugin。 |
 
-所有网络 layer 都可以设置 `fallback` 和 `timeout_ms`。`local` 额外可设置 `refresh_secs`，默认 30 秒。fallback 引用必须存在，整张图不能有环。固定网络地址不能使用端口 0，也不能与 listener 地址重叠，包括未指定地址造成的潜在重叠。
+所有 resolver layer 都可以设置可选 `plugin`；成功的 DNS 响应先执行该插件，再返回客户端。带非空 `match` 的 layer 必须设置 `next`，用于未命中的请求；所有 resolver layer 都可以设置 `fallback` 和 `timeout_ms`，`local` 额外可设置 `refresh_secs`，默认 30 秒。`next` 与 `fallback` 引用必须存在，合并后的整张图不能有环。固定网络地址不能使用端口 0，也不能与 listener 地址重叠，包括未指定地址造成的潜在重叠。
 
 ### DoH 约束
 
@@ -167,7 +172,7 @@ DoT 使用 `address` 建立 TCP 连接，使用 `server_name` 完成 TLS SNI 和
 
 启动时立即发现系统 DNS，随后按 `refresh_secs` 刷新；同一进程中存在多个 `local` layer 时，使用最短刷新周期。单次 local 查询会依次尝试缓存中的每个地址，UDP 响应带 `TC=1` 时用同一地址 TCP 重试。一个地址出现网络或协议错误后，EdgeSteer 会在本次请求的剩余 deadline 内立即重新发现系统 DNS，并把新地址追加到候选列表。有效 DNS 响应（包括 `SERVFAIL`）不会触发重试或 fallback。
 
-`local` 只能接受 `timeout_ms`、`refresh_secs`、`fallback` 和 `match`；`address`、`url`、`server_name`、`plugin` 会被拒绝。这里的“动态”是读取当前系统与 DHCP 网络状态，不是调用 libc resolver，因此不会自行进入 EdgeSteer listener，也不会把过去的 DNS 地址固定下来。
+`local` 只能接受 `timeout_ms`、`refresh_secs`、`next`、`fallback`、`match` 和 `plugin`；`address`、`url`、`server_name` 会被拒绝。这里的“动态”是读取当前系统与 DHCP 网络状态，不是调用 libc resolver，因此不会自行进入 EdgeSteer listener，也不会把过去的 DNS 地址固定下来。
 
 ## sing-box SRS 域名规则集
 
@@ -190,9 +195,16 @@ DoT 使用 `address` 建立 TCP 连接，使用 `server_name` 完成 TLS SNI 和
       "type": "local",
       "timeout_ms": 1800,
       "refresh_secs": 30,
+      "next": "default",
       "match": {
         "rule_sets": ["geosite-private"]
       }
+    },
+    {
+      "tag": "default",
+      "type": "local",
+      "timeout_ms": 1800,
+      "refresh_secs": 30
     }
   ]
 }
@@ -225,13 +237,13 @@ layer 可选 `match`：
 - `contains` 是显式字面子串匹配，适合确实需要宽松规则的场景；它不提供正则语义。
 - `rule_sets` 引用顶层规则集 tag；同一 `match` 中关键词和规则集是“任一命中即可”的关系。规则集尚未加载、刷新失败且没有旧版本时不会命中。
 - 关键词或规则集 tag 为空、未声明或重复都会被拒绝。
-- 单 question 请求按 `layers` 的声明顺序取第一个关键词或规则集命中的 layer；没有命中才使用 `entry`。
-- 命中后从目标 layer 开始，只走该节点自己的 fallback。因此把规则直接放在 Tencent 或 local 上会跳过之前的 preferred interceptor；若仍需优选，应把匹配规则放在 interceptor，或让目标路径经过 interceptor。
-- 多 question 请求始终从 `entry` 开始，不把同一 DNS 报文拆给不同 resolver。
+- 每个请求都从 `entry` 开始。带 `match` 的 layer 只有在单 question 的关键词或规则集命中时才会查询自身 resolver；未命中会直接跳到 `next`，不会发送 DNS 请求。
+- `next` 与 `fallback` 语义不同：`next` 是规则未命中，`fallback` 仅用于连接、TLS、HTTP、畸形响应或关联校验失败。有效的 `NXDOMAIN`、NODATA、`SERVFAIL` 和 `REFUSED` 都会结束链路。
+- 多 question 请求没有唯一 QNAME，会跳过所有带 `match` 的 layer，并沿 `next` 到第一个无过滤的 resolver；同一 DNS 报文不会被拆给不同 resolver。
 
 ## Preferred 插件与 optimizer
 
-当前可用插件类型为 `cloudflare_preferred`。它只能由 `interceptor` layer 引用：
+当前可用插件类型为 `cloudflare_preferred`。任意 resolver layer 可以用 `plugin` 引用它；resolver 成功后，插件会在响应返回客户端前运行：
 
 ```json
 {
@@ -276,8 +288,8 @@ layer 可选 `match`：
 
 optimizer 从 IP 或 CIDR 候选中采样；每个候选连续执行 `probes_per_candidate` 次完整 TCP、TLS 与 HTTP 探测，任一次失败即淘汰，HTTP 必须返回 2xx 且 `server: cloudflare`。它按“中位延迟 + 一半尾延迟”排序，避免单次偶发快或严重抖动的 IP 胜出。IPv4/IPv6 分开选择；严格模式下某一地址族本轮没有合格候选不会保留上一次成功值。
 
-拦截器只在相关地址全部属于 Cloudflare 时改写。混合地址、非 Cloudflare 地址、没有优选值或没有可改写记录都会原样返回；实际改写后 TTL 设为 `rewrite_ttl_secs`，并清理 DNSSEC 认证状态。
+插件只在相关地址全部属于 Cloudflare 时改写。混合地址、非 Cloudflare 地址、没有优选值或没有可改写记录都会原样返回；实际改写后 TTL 设为 `rewrite_ttl_secs`，并清理 DNSSEC 认证状态。
 
 ## 校验清单
 
-`--check-config` 会验证：JSON 语法、未知字段、非空并唯一的 tag、entry/fallback/plugin/规则集引用、fallback 环、listener 安全边界、网络地址和 timeout、DoH URL/端口、DoT server name、关键词、SRS 来源字段以及 optimizer 参数。Cloudflare 静态优选地址还会对当前活动网段做校验。
+`--check-config` 会验证：JSON 语法、未知字段、非空并唯一的 tag、entry/next/fallback/plugin/规则集引用、`next + fallback` 图环、带过滤 layer 的 `next`、listener 安全边界、网络地址和 timeout、DoH URL/端口、DoT server name、关键词、SRS 来源字段以及 optimizer 参数。Cloudflare 静态优选地址还会对当前活动网段做校验。

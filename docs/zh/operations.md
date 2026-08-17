@@ -2,7 +2,7 @@
 
 [中文](operations.md) | [English](../en/operations.md) | [返回中文首页](../../README.md)
 
-本页说明从构建、验证到作为本机 DNS 使用的步骤。先用高端口确认回退链，再切换系统 DNS；这样配置错误不会把整台机器的 DNS 一起中断。
+本页说明从构建、验证到作为本机 DNS 使用的步骤。先用高端口确认 resolver 图，再切换系统 DNS；这样配置错误不会把整台机器的 DNS 一起中断。
 
 ## 安装与启动
 
@@ -37,7 +37,7 @@ cargo build --locked --release --features gui
 ./target/release/edgesteer-ui
 ```
 
-服务与界面都固定使用 `~/edgesteer.json`（Windows 使用 `%USERPROFILE%\edgesteer.json`），不会从工作目录读取另一份配置。界面覆盖 listener、layer/fallback、SRS 规则集、Cloudflare 优选插件和 optimizer。默认是中文暗色界面；语言和黑/白主题位于设置页的下拉框。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口显示 Agent 管理的 listener 与物理网络服务状态。macOS App 以菜单栏代理方式运行，不显示 Dock 图标；关闭窗口会结束 Iced 图形进程并释放 GPU/Metal 资源，可从菜单栏重新打开。macOS 上，只有点击启用系统 DNS 后才会请求管理员授权；Linux、Windows 可以构建和使用界面配置 DNS 服务，但系统 DNS 仍由对应网络管理器负责。Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
+服务与界面都固定使用 `~/edgesteer.json`（Windows 使用 `%USERPROFILE%\edgesteer.json`），不会从工作目录读取另一份配置。界面覆盖 listener、layer 的 `next` / `fallback`、SRS 规则集、Cloudflare 优选插件和 optimizer。默认是中文暗色界面；语言和黑/白主题位于设置页的下拉框。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口显示 Agent 管理的 listener 与物理网络服务状态。macOS App 以菜单栏代理方式运行，不显示 Dock 图标；关闭窗口会结束 Iced 图形进程并释放 GPU/Metal 资源，可从菜单栏重新打开。macOS 上，只有点击启用系统 DNS 后才会请求管理员授权；Linux、Windows 可以构建和使用界面配置 DNS 服务，但系统 DNS 仍由对应网络管理器负责。Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
 
 ### 先用高端口验证
 
@@ -92,10 +92,10 @@ RUST_LOG=debug ./target/release/edgesteer
 
 | 现象 | 优先检查 |
 | --- | --- |
-| `configuration ... rejected` | JSON 语法、未知字段、重复 tag、fallback 环、DoH URL/端口、listener 与 upstream 是否重叠。 |
+| `configuration ... rejected` | JSON 语法、未知字段、重复 tag、`next + fallback` 图环、DoH URL/端口、listener 与 upstream 是否重叠。 |
 | 查询返回 `SERVFAIL` | 查看每一层的超时、TLS、HTTP、Content-Type 和上游地址；所有网络层失败后才会生成 SERVFAIL。 |
 | Cloudflare 地址没有改写 | 严格模式下首个请求会先做 SNI/Host 验证；确认 `compatibility_hosts` 包含真实业务域名、探测未失败，且响应地址全部在活动 Cloudflare 网段。未验证时原样返回是预期安全回退。 |
-| 域名规则没有命中 | label 模式只匹配完整 label；单 question 才走规则，多 question 使用 `entry`；检查 layer 声明顺序。SRS 规则集还要确认日志出现 `loaded sing-box domain rule set`，并检查其 tag、URL/路径和支持的域名条件。 |
+| 域名规则没有命中 | label 模式只匹配完整 label；单 question 才使用过滤，多 question 会跳过过滤层。未命中会按设计进入该 layer 的 `next`，同时检查 `next` 目标和关键词/规则集。SRS 规则集还要确认日志出现 `loaded sing-box domain rule set`，并检查其 tag、URL/路径和支持的域名条件。 |
 | 修改配置后行为没变 | 等待 debounce，查看 reload 日志；若改了 listener，需要重启；若文件保存过程产生临时空文件，修复编辑器的原子保存方式。 |
 | DoH 失败但可直连 IP | 检查 URL 主机名证书、bootstrap 端口、系统时间、网络出口；EdgeSteer 不跟随重定向且禁用代理。 |
 

@@ -133,6 +133,7 @@ mod tests {
             layers: vec![LayerConfig {
                 tag: "local".to_owned(),
                 kind: LayerType::Udp,
+                next: None,
                 fallback: None,
                 matcher: Default::default(),
                 address: Some(upstream.parse().unwrap()),

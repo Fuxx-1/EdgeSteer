@@ -2,7 +2,7 @@
 
 [English](operations.md) | [中文](../zh/operations.md) | [Back to English README](README.md)
 
-This page covers building, validating, and using EdgeSteer as a local DNS service. Test the fallback chain on a high port first, then change system DNS; a configuration error should not take down DNS for the whole machine.
+This page covers building, validating, and using EdgeSteer as a local DNS service. Test the resolver graph on a high port first, then change system DNS; a configuration error should not take down DNS for the whole machine.
 
 ## Install and start
 
@@ -37,7 +37,7 @@ cargo build --locked --release --features gui
 ./target/release/edgesteer-ui
 ```
 
-The service and UI both use the fixed `~/edgesteer.json` path (`%USERPROFILE%\edgesteer.json` on Windows), never another working-directory file. The UI covers the listener, resolver layers and fallbacks, SRS rule sets, Cloudflare preferred-IP plugins, and the optimizer. It opens in Chinese dark mode; Settings provides Chinese/English and Dark/Light pick lists. The menu bar is the primary control surface, while Settings shows the Agent-managed listener, an optional per-user login item, and physical network-service state. On macOS, the packaged App runs as a menu-bar agent with no Dock entry. Closing Settings terminates the Iced process and releases its GPU/Metal resources; the menu-bar item opens a fresh Settings process when needed. Enabling system DNS requests administrator authorization only after the user selects it. Linux and Windows build and use the UI to configure the DNS service; their network managers remain responsible for system DNS registration. Linux menu-bar support requires GTK 3 and an Ayatana AppIndicator runtime.
+The service and UI both use the fixed `~/edgesteer.json` path (`%USERPROFILE%\edgesteer.json` on Windows), never another working-directory file. The UI covers the listener, resolver-layer `next` / `fallback` links, SRS rule sets, Cloudflare preferred-IP plugins, and the optimizer. It opens in Chinese dark mode; Settings provides Chinese/English and Dark/Light pick lists. The menu bar is the primary control surface, while Settings shows the Agent-managed listener, an optional per-user login item, and physical network-service state. On macOS, the packaged App runs as a menu-bar agent with no Dock entry. Closing Settings terminates the Iced process and releases its GPU/Metal resources; the menu-bar item opens a fresh Settings process when needed. Enabling system DNS requests administrator authorization only after the user selects it. Linux and Windows build and use the UI to configure the DNS service; their network managers remain responsible for system DNS registration. Linux menu-bar support requires GTK 3 and an Ayatana AppIndicator runtime.
 
 ### Test on a high port
 
@@ -95,7 +95,7 @@ RUST_LOG=debug ./target/release/edgesteer
 | `configuration ... rejected` | JSON syntax, unknown fields, duplicate tags, fallback cycles, DoH URL/port, and listener/upstream overlap. |
 | Query returns `SERVFAIL` | Check each layer's timeout, TLS, HTTP status, Content-Type, and endpoint; SERVFAIL is generated only after all network layers fail. |
 | Cloudflare answer is not rewritten | In strict mode, the first request performs an SNI/Host check. Confirm that `compatibility_hosts` contains a real business hostname and the probe has not failed, then confirm the response addresses are in the active Cloudflare ranges. Returning the untouched answer before validation is the expected safe fallback. |
-| Domain rule does not match | Label mode requires complete labels; only single-question packets use rules; inspect declaration order. For SRS, confirm a `loaded sing-box domain rule set` log entry, then check its tag, URL/path, and supported domain conditions. |
+| Domain rule does not match | Label mode requires complete labels; only single-question packets use filters. A miss intentionally follows that layer's `next`; verify the `next` target as well as the keyword/rule set. For SRS, confirm a `loaded sing-box domain rule set` log entry, then check its tag, URL/path, and supported domain conditions. |
 | Changes appear inactive | Wait for debounce and inspect reload logs. Listener changes require restart. Editors that save through a temporary empty file should be configured for atomic replacement. |
 | DoH fails while direct IP works | Check URL hostname certificates, bootstrap port, system time, and network egress; EdgeSteer does not follow redirects and disables proxies. |
 
