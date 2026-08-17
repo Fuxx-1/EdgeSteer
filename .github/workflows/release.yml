@@ -166,10 +166,12 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           PRERELEASE: ${{ needs.validate-tag.outputs.prerelease }}
         run: |
+          test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 6
           args=(--generate-notes)
           if [[ "$PRERELEASE" == "true" ]]; then
             args+=(--prerelease)
           fi
-          gh release create "${GITHUB_REF_NAME}" "${args[@]}" release-assets/*
+          gh release create --repo "$GH_REPO" "${GITHUB_REF_NAME}" "${args[@]}" release-assets/*
