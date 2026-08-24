@@ -116,7 +116,7 @@ jobs:
           if ($hostTarget -ne $env:EXPECTED_TARGET) { throw "Expected $env:EXPECTED_TARGET Rust host, got $hostTarget" }
       - name: Install Linux tray dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libasound2-dev libpulse-dev
       - run: cargo build --locked --release --features gui --target ${{ matrix.target }}
       - name: Package Unix archive
         if: matrix.archive == 'tar'
