@@ -31,6 +31,7 @@ pub struct UiOptions {
 }
 
 pub fn run(options: UiOptions) -> Result<(), String> {
+    prepare_font_cache();
     let mut slot = UI_OPTIONS
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -40,6 +41,135 @@ pub fn run(options: UiOptions) -> Result<(), String> {
 
     app_main();
     Ok(())
+}
+
+/// Makepad resolves font dependencies before the first frame. Prefer fonts
+/// already installed by the operating system; only fetch the fallback set
+/// when no supported CJK font is present. The cache is deliberately outside
+/// the App bundle so updates do not require reinstalling EdgeSteer.
+fn prepare_font_cache() {
+    if system_cjk_font_available() && system_emoji_font_available() {
+        return;
+    }
+    let Some(cache) = font_cache_directory() else {
+        return;
+    };
+    let required = [
+        (
+            "LXGWWenKaiRegular.ttf",
+            "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/fonts/TTF/LXGWWenKai-Regular.ttf",
+        ),
+        (
+            "LXGWWenKaiBold.ttf",
+            "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/fonts/TTF/LXGWWenKai-Medium.ttf",
+        ),
+        (
+            "NotoColorEmoji.ttf",
+            "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf",
+        ),
+    ];
+    if required.iter().all(|(name, _)| {
+        cache
+            .join(name)
+            .metadata()
+            .is_ok_and(|meta| meta.len() > 1024)
+    }) {
+        return;
+    }
+    if let Err(error) = fs::create_dir_all(&cache) {
+        eprintln!("EdgeSteer: create font cache failed: {error}");
+        return;
+    }
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("EdgeSteer: create font download runtime failed: {error}");
+            return;
+        }
+    };
+    runtime.block_on(async {
+        let client = match reqwest::Client::builder()
+            .https_only(true)
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                eprintln!("EdgeSteer: create font client failed: {error}");
+                return;
+            }
+        };
+        for (name, url) in required {
+            let target = cache.join(name);
+            if target.metadata().is_ok_and(|meta| meta.len() > 1024) {
+                continue;
+            }
+            match client.get(url).send().await {
+                Ok(response) => match response.error_for_status() {
+                    Ok(response) => match response.bytes().await {
+                        Ok(bytes) if bytes.len() <= 32 * 1024 * 1024 => {
+                            let temporary = target.with_extension("download");
+                            if fs::write(&temporary, &bytes)
+                                .and_then(|()| fs::rename(&temporary, &target))
+                                .is_err()
+                            {
+                                eprintln!("EdgeSteer: save font {name} failed");
+                            }
+                        }
+                        Ok(_) => eprintln!("EdgeSteer: font {name} exceeds size limit"),
+                        Err(error) => eprintln!("EdgeSteer: download font {name} failed: {error}"),
+                    },
+                    Err(error) => eprintln!("EdgeSteer: download font {name} failed: {error}"),
+                },
+                Err(error) => eprintln!("EdgeSteer: download font {name} failed: {error}"),
+            }
+        }
+    });
+}
+
+fn font_cache_directory() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("EDGESTEER_FONT_CACHE") {
+        return Some(PathBuf::from(path));
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(PathBuf::from(home).join("Library/Caches/EdgeSteer/fonts"));
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        return Some(PathBuf::from(local_app_data).join("EdgeSteer/fonts"));
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".cache/edgesteer/fonts"))
+}
+
+fn system_cjk_font_available() -> bool {
+    let candidates = [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/PingFang SC.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    ];
+    candidates.iter().any(|path| PathBuf::from(path).is_file())
+}
+
+fn system_emoji_font_available() -> bool {
+    [
+        "/System/Library/Fonts/Apple Color Emoji.ttc",
+        "C:/Windows/Fonts/seguiemj.ttf",
+        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    ]
+    .iter()
+    .any(|path| PathBuf::from(path).is_file())
 }
 
 fn take_ui_options() -> Option<UiOptions> {

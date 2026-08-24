@@ -29,11 +29,17 @@ impl Cx {
             // Live compiler paths contain the build machine's absolute Cargo
             // directories. Release bundles carry the same files below their
             // `resources/` subtree, so resolve that stable suffix at runtime.
-            let bundled_path = path
-                .split_once("resources/")
-                .map(|(_, suffix)| format!("{}/resources/{}", bundle_path, suffix));
-            let file_path = bundled_path.as_deref().unwrap_or(path);
-            if let Ok(mut file_handle) = File::open(file_path) {
+            let mut file_handle = crate::os::cx_native::resource_candidates(path)
+                .into_iter()
+                .map(File::open)
+                .find_map(Result::ok);
+            if file_handle.is_none() {
+                let bundled_path = path
+                    .split_once("resources/")
+                    .map(|(_, suffix)| format!("{}/resources/{}", bundle_path, suffix));
+                file_handle = bundled_path.as_deref().and_then(|path| File::open(path).ok());
+            }
+            if let Some(mut file_handle) = file_handle {
                 let mut buffer = Vec::<u8>::new();
                 if file_handle.read_to_end(&mut buffer).is_ok() {
                     dep.data = Some(Ok(Rc::new(buffer)));

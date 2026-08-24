@@ -67,7 +67,7 @@ cargo build --locked --release --features gui
 ./target/release/edgesteer-ui
 ```
 
-服务与界面固定使用 `~/edgesteer.json`（Windows 为 `%USERPROFILE%\edgesteer.json`）。界面默认使用中文暗色模式，Makepad 包含可复现的中英文和 emoji 字体资源；语言和黑/白主题位于设置页的下拉框。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口用于编辑配置与查看详细状态。macOS App 是菜单栏代理，不显示 Dock 图标；从菜单栏可重新打开设置窗口。macOS 上可启用“登录时打开”，它注册的是当前 App 的用户级 LaunchAgent；启用系统 DNS 时才请求管理员授权。
+服务与界面固定使用 `~/edgesteer.json`（Windows 为 `%USERPROFILE%\edgesteer.json`）。界面默认使用中文暗色模式，字体优先使用系统字体；系统缺少中文或 emoji 字体时才从 HTTPS 下载并缓存到用户目录。语言和黑/白主题位于设置页的下拉框。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口用于编辑配置与查看详细状态。macOS App 是菜单栏代理，不显示 Dock 图标；从菜单栏可重新打开设置窗口。macOS 上可启用“登录时打开”，它注册的是当前 App 的用户级 LaunchAgent；启用系统 DNS 时才请求管理员授权。
 
 系统 DNS 只会接管原本使用 DHCP 自动 DNS 的物理服务，并保存一份“由 EdgeSteer 接管”的服务清单，不保存或回放旧 DNS 地址。默认关闭设置窗口会结束 Makepad 图形进程并释放界面资源，Agent 和 DNS 引擎继续在菜单栏运行；从菜单栏明确选择“退出 EdgeSteer”后，Agent 才会先恢复这份清单到自动 DNS，再停止引擎并关闭设置窗口。恢复失败时 App 保持运行，避免留下无法解析的 `127.0.0.1`。手工显式 DNS 不会被覆盖。Linux、Windows 可以构建并使用界面配置 DNS 服务，系统 DNS 注册仍由各自网络管理器处理；Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
 

@@ -37,7 +37,7 @@ cargo build --locked --release --features gui
 ./target/release/edgesteer-ui
 ```
 
-服务与界面都固定使用 `~/edgesteer.json`（Windows 使用 `%USERPROFILE%\edgesteer.json`），不会从工作目录读取另一份配置。界面覆盖 listener、layer 的 `next` / `fallback`、SRS 规则集、Cloudflare 优选插件和 optimizer。默认是中文暗色界面；语言和黑/白主题位于设置页的下拉框。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口显示 Agent 管理的 listener 与物理网络服务状态。macOS App 以菜单栏代理方式运行，不显示 Dock 图标；关闭窗口会结束 Makepad 图形进程并释放界面资源，可从菜单栏重新打开。macOS 上，只有点击启用系统 DNS 后才会请求管理员授权；Linux、Windows 可以构建和使用界面配置 DNS 服务，但系统 DNS 仍由对应网络管理器负责。Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
+服务与界面都固定使用 `~/edgesteer.json`（Windows 使用 `%USERPROFILE%\edgesteer.json`），不会从工作目录读取另一份配置。界面覆盖 listener、layer 的 `next` / `fallback`、SRS 规则集、Cloudflare 优选插件和 optimizer。默认是中文暗色界面；语言和黑/白主题位于设置页的下拉框。字体优先使用系统中文与 emoji 字体，缺少时才通过 HTTPS 下载并缓存到用户目录。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口显示 Agent 管理的 listener 与物理网络服务状态。macOS App 以菜单栏代理方式运行，不显示 Dock 图标；关闭窗口会结束 Makepad 图形进程并释放界面资源，可从菜单栏重新打开。macOS 上，只有点击启用系统 DNS 后才会请求管理员授权；Linux、Windows 可以构建和使用界面配置 DNS 服务，但系统 DNS 仍由对应网络管理器负责。Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
 
 ### 先用高端口验证
 
