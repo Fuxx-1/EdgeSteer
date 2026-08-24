@@ -24,17 +24,31 @@ impl Cx {
     
     pub fn native_load_dependencies(&mut self){
         for (path,dep) in &mut self.dependencies{
-            let bundled_path = path.split_once("resources/").and_then(|(_, suffix)| {
-                std::env::current_exe().ok().and_then(|exe| {
-                    exe.parent().map(|dir| dir.join("resources").join(suffix))
+            let bundled_paths = path.split_once("resources/").and_then(|(_, suffix)| {
+                std::env::current_exe().ok().map(|exe| {
+                    let mut paths = Vec::with_capacity(2);
+                    if let Some(dir) = exe.parent() {
+                        paths.push(dir.join("resources").join(suffix));
+                        // macOS app bundles place files under Contents/Resources,
+                        // while the executable itself lives in Contents/MacOS.
+                        if let Some(contents) = dir.parent() {
+                            paths.push(contents.join("Resources").join("resources").join(suffix));
+                        }
+                    }
+                    paths
                 })
             });
-            let file_handle = File::open(path).or_else(|_| {
-                bundled_path
-                    .as_ref()
-                    .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
-                    .and_then(File::open)
-            });
+            let mut file_handle = File::open(path);
+            if file_handle.is_err() {
+                if let Some(paths) = bundled_paths {
+                    for candidate in paths {
+                        if let Ok(file) = File::open(candidate) {
+                            file_handle = Ok(file);
+                            break;
+                        }
+                    }
+                }
+            }
             if let Ok(mut file_handle) = file_handle {
                 let mut buffer = Vec::<u8>::new();
                 if file_handle.read_to_end(&mut buffer).is_ok() {
