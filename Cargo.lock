@@ -1915,8 +1915,6 @@ checksum = "c195852bf1e5dc94b791340d497a7b3b0f92ecafc8ebfaab00f60b04dbe82556"
 [[package]]
 name = "makepad-platform"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "261157075e9bdd494925fe5dc1650828c8c047f087b413d00f0e3e8e650eb7b8"
 dependencies = [
  "bitflags 2.13.1",
  "hilog-sys",

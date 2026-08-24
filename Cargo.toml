@@ -48,6 +48,7 @@ winit = { version = "0.29.15", optional = true }
 # emoji fonts at resources absent from that crate. Keep the released API while
 # using the crate's declared font dependencies instead.
 makepad-widgets = { path = "third_party/makepad-widgets" }
+makepad-platform = { path = "third_party/makepad-platform" }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.24.1", default-features = false, optional = true }

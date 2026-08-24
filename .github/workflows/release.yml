@@ -127,6 +127,7 @@ jobs:
           cp target/${{ matrix.target }}/release/edgesteer-ui dist/edgesteer-ui
           cp README.md config.example.json LICENSE dist/
           cp -R docs dist/docs
+          cp -R third_party/makepad-widgets/resources dist/resources
           tar -C dist -czf EdgeSteer-${{ matrix.asset }}.tar.gz .
       - name: Package macOS disk image
         if: matrix.archive == 'dmg'
@@ -147,6 +148,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/edgesteer-ui.exe" "dist/edgesteer-ui.exe"
           Copy-Item README.md, config.example.json, LICENSE dist/
           Copy-Item docs "dist/docs" -Recurse
+          Copy-Item third_party/makepad-widgets/resources "dist/resources" -Recurse
           Compress-Archive -Path dist/* -DestinationPath "EdgeSteer-${{ matrix.asset }}.zip" -Force
       - uses: actions/upload-artifact@v5
         with:

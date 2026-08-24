@@ -34,6 +34,10 @@ install -m 644 "$repository_root/packaging/macos/EdgeSteer.icns" "$resources/Edg
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$app/Contents/Info.plist"
 install -m 644 "$repository_root/README.md" "$repository_root/LICENSE" "$repository_root/config.example.json" "$resources/"
 /usr/bin/ditto "$repository_root/docs" "$resources/docs"
+# Makepad live resources are addressed as resources/<file> at runtime.
+# Keep the complete widgets resource tree inside the app bundle so the same
+# binary works outside the build machine that produced it.
+/usr/bin/ditto "$repository_root/third_party/makepad-widgets/resources" "$resources/resources"
 
 # Cargo may leave a signature on the executable itself. Sign the completed
 # bundle so macOS validates its resources as one App instead of treating the
