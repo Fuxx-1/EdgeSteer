@@ -48,26 +48,25 @@ pub fn run(options: UiOptions) -> Result<(), String> {
 /// when no supported CJK font is present. The cache is deliberately outside
 /// the App bundle so updates do not require reinstalling EdgeSteer.
 fn prepare_font_cache() {
-    if system_cjk_font_available() && system_emoji_font_available() {
+    if system_cjk_font_available() {
         return;
     }
     let Some(cache) = font_cache_directory() else {
         return;
     };
-    let required = [
-        (
-            "LXGWWenKaiRegular.ttf",
-            "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/fonts/TTF/LXGWWenKai-Regular.ttf",
-        ),
-        (
-            "LXGWWenKaiBold.ttf",
-            "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/fonts/TTF/LXGWWenKai-Medium.ttf",
-        ),
-        (
-            "NotoColorEmoji.ttf",
-            "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf",
-        ),
-    ];
+    let mut required = Vec::new();
+    if !system_cjk_font_available() {
+        required.extend([
+            (
+                "LXGWWenKaiRegular.ttf",
+                "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/fonts/TTF/LXGWWenKai-Regular.ttf",
+            ),
+            (
+                "LXGWWenKaiBold.ttf",
+                "https://raw.githubusercontent.com/lxgw/LxgwWenKai/main/fonts/TTF/LXGWWenKai-Regular.ttf",
+            ),
+        ]);
+    }
     if required.iter().all(|(name, _)| {
         cache
             .join(name)
@@ -93,7 +92,7 @@ fn prepare_font_cache() {
     runtime.block_on(async {
         let client = match reqwest::Client::builder()
             .https_only(true)
-            .timeout(std::time::Duration::from_secs(20))
+            .timeout(std::time::Duration::from_secs(5))
             .build()
         {
             Ok(client) => client,
@@ -147,29 +146,28 @@ fn font_cache_directory() -> Option<PathBuf> {
         .map(|home| home.join(".cache/edgesteer/fonts"))
 }
 
+#[allow(clippy::needless_return)]
 fn system_cjk_font_available() -> bool {
-    let candidates = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/PingFang SC.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simhei.ttf",
+    #[cfg(target_os = "macos")]
+    {
+        let home_font = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join("Library/Fonts/LXGWWenKai-Regular.ttf"));
+        return home_font.is_some_and(|path| path.is_file());
+    }
+    #[cfg(target_os = "windows")]
+    return ["C:/Windows/Fonts/msyh.ttf", "C:/Windows/Fonts/simhei.ttf"]
+        .iter()
+        .any(|path| PathBuf::from(path).is_file());
+    #[cfg(target_os = "linux")]
+    return [
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    ];
-    candidates.iter().any(|path| PathBuf::from(path).is_file())
-}
-
-fn system_emoji_font_available() -> bool {
-    [
-        "/System/Library/Fonts/Apple Color Emoji.ttc",
-        "C:/Windows/Fonts/seguiemj.ttf",
-        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
     ]
     .iter()
-    .any(|path| PathBuf::from(path).is_file())
+    .any(|path| PathBuf::from(path).is_file());
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    false
 }
 
 fn take_ui_options() -> Option<UiOptions> {
@@ -318,6 +316,7 @@ live_design! {
                 window: {
                     title: "EdgeSteer"
                     inner_size: vec2(1180., 780.)
+                    position: vec2(120., 80.)
                 }
                 pass: {clear_color: (THEME_COLOR_BG_APP)}
                 body = <View> {

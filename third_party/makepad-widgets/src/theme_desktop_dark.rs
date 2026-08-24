@@ -346,7 +346,7 @@ live_design! {
         font_family:{
             latin = font("crate://self/resources/IBMPlexSans-Text.ttf", -0.1, 0.0),
             chinese = font("crate://makepad_fonts_chinese_regular/resources/LXGWWenKaiRegular.ttf", 0.0, 0.0)
-            emoji = font("crate://makepad_fonts_emoji/resources/NotoColorEmoji.ttf", 0.0, 0.0)
+            emoji = font("crate://self/resources/IBMPlexSans-Text.ttf", 0.0, 0.0)
         },
         line_spacing: 1.2
     } // TODO: LEGACY, REMOVE. REQUIRED BY RUN LIST IN STUDIO ATM
@@ -354,7 +354,7 @@ live_design! {
         font_family: {
             latin = font("crate://self/resources/IBMPlexSans-Text.ttf", -0.1, 0.0),
             chinese = font("crate://makepad_fonts_chinese_regular/resources/LXGWWenKaiRegular.ttf", 0.0, 0.0)
-            emoji = font("crate://makepad_fonts_emoji/resources/NotoColorEmoji.ttf", 0.0, 0.0)
+            emoji = font("crate://self/resources/IBMPlexSans-Text.ttf", 0.0, 0.0)
         },
         line_spacing: 1.2
     }
@@ -362,7 +362,7 @@ live_design! {
         font_family:{
             latin = font("crate://self/resources/IBMPlexSans-SemiBold.ttf", -0.1, 0.0),
             chinese = font("crate://makepad_fonts_chinese_bold/resources/LXGWWenKaiBold.ttf", 0.0, 0.0)
-            emoji = font("crate://makepad_fonts_emoji/resources/NotoColorEmoji.ttf", 0.0, 0.0)
+            emoji = font("crate://self/resources/IBMPlexSans-Text.ttf", 0.0, 0.0)
         },
         line_spacing: 1.2
     }

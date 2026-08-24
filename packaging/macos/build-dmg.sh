@@ -37,7 +37,19 @@ install -m 644 "$repository_root/README.md" "$repository_root/LICENSE" "$reposit
 # Makepad live resources are addressed as resources/<file> at runtime.
 # Keep the complete widgets resource tree inside the app bundle so the same
 # binary works outside the build machine that produced it.
-/usr/bin/ditto "$repository_root/third_party/makepad-widgets/resources" "$resources/resources"
+mkdir -p "$resources/resources"
+for resource in \
+  IBMPlexSans-BoldItalic.ttf \
+  IBMPlexSans-Italic.ttf \
+  IBMPlexSans-SemiBold.ttf \
+  IBMPlexSans-Text.ttf \
+  LXGWWenKaiRegular.ttf \
+  LXGWWenKaiBold.ttf \
+  LiberationMono-Regular.ttf \
+  NotoSans-Regular.ttf \
+  fa-solid-900.ttf; do
+  install -m 644 "$repository_root/third_party/makepad-widgets/resources/$resource" "$resources/resources/$resource"
+done
 
 # Cargo may leave a signature on the executable itself. Sign the completed
 # bundle so macOS validates its resources as one App instead of treating the

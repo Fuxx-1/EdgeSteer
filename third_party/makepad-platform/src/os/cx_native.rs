@@ -25,14 +25,18 @@ impl Cx {
     
     pub fn native_load_dependencies(&mut self){
         for (path,dep) in &mut self.dependencies{
-            let mut file_handle = File::open(path);
-            if file_handle.is_err() {
-                for candidate in resource_candidates(path) {
-                    if let Ok(file) = File::open(candidate) {
-                        file_handle = Ok(file);
-                        break;
-                    }
+            let mut file_handle = Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "resource candidates not found",
+            ));
+            for candidate in resource_candidates(path) {
+                if let Ok(file) = File::open(&candidate) {
+                    file_handle = Ok(file);
+                    break;
                 }
+            }
+            if file_handle.is_err() {
+                file_handle = File::open(path);
             }
             if let Ok(mut file_handle) = file_handle {
                 let mut buffer = Vec::<u8>::new();
@@ -64,9 +68,16 @@ pub(crate) fn resource_candidates(path: &str) -> Vec<PathBuf> {
 
     if let Some(file_name) = file_name {
         if is_font_resource(file_name) {
-            candidates.extend(system_font_candidates(file_name));
+            candidates.extend(
+                system_font_candidates(file_name)
+                    .into_iter()
+                    .filter(|candidate| font_file_is_usable(candidate)),
+            );
             if let Some(cache) = font_cache_dir() {
-                candidates.push(cache.join(file_name));
+                let cached = cache.join(file_name);
+                if font_file_is_usable(&cached) {
+                    candidates.push(cached);
+                }
             }
         }
     }
@@ -74,9 +85,19 @@ pub(crate) fn resource_candidates(path: &str) -> Vec<PathBuf> {
     if let Some((_, suffix)) = path.split_once("resources/") {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                candidates.push(dir.join("resources").join(suffix));
+                let bundled = dir.join("resources").join(suffix);
+                if !is_font_resource(file_name.unwrap_or_default())
+                    || font_file_is_usable(&bundled)
+                {
+                    candidates.push(bundled);
+                }
                 if let Some(contents) = dir.parent() {
-                    candidates.push(contents.join("Resources").join("resources").join(suffix));
+                    let bundled = contents.join("Resources").join("resources").join(suffix);
+                    if !is_font_resource(file_name.unwrap_or_default())
+                        || font_file_is_usable(&bundled)
+                    {
+                        candidates.push(bundled);
+                    }
                 }
             }
         }
@@ -88,6 +109,46 @@ fn is_font_resource(file_name: &str) -> bool {
     file_name.ends_with(".ttf")
         || file_name.ends_with(".ttf.2")
         || file_name.ends_with(".ttc")
+}
+
+// Makepad's font parser requires a complete sfnt file. This rejects truncated
+// remote downloads before they can become the first resource candidate.
+fn font_file_is_usable(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    if path.extension().is_some_and(|extension| extension == "ttc") {
+        return true;
+    }
+    let Ok(data) = std::fs::read(path) else {
+        return false;
+    };
+    if data.len() < 12 {
+        return false;
+    }
+    let table_count = u16::from_be_bytes([data[4], data[5]]) as usize;
+    let records_end = 12usize.saturating_add(table_count.saturating_mul(16));
+    if records_end > data.len() {
+        return false;
+    }
+    (0..table_count).all(|index| {
+        let offset = 12 + index * 16;
+        let table_start = u32::from_be_bytes([
+            data[offset + 8],
+            data[offset + 9],
+            data[offset + 10],
+            data[offset + 11],
+        ]) as usize;
+        let table_length = u32::from_be_bytes([
+            data[offset + 12],
+            data[offset + 13],
+            data[offset + 14],
+            data[offset + 15],
+        ]) as usize;
+        table_start
+            .checked_add(table_length)
+            .is_some_and(|end| end <= data.len())
+    })
 }
 
 fn font_cache_dir() -> Option<PathBuf> {
@@ -108,26 +169,25 @@ fn font_cache_dir() -> Option<PathBuf> {
 }
 
 fn system_font_candidates(file_name: &str) -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    let _ = file_name;
+    #[cfg(not(target_os = "macos"))]
     let names: &[&str] = if file_name.contains("NotoColorEmoji") {
-        &["NotoColorEmoji.ttf", "Apple Color Emoji.ttc", "seguiemj.ttf"]
+        &["NotoColorEmoji.ttf", "seguiemj.ttf"]
     } else {
         &[
             "LXGWWenKai-Regular.ttf",
             "LXGWWenKai-Medium.ttf",
-            "PingFang.ttc",
-            "PingFang SC.ttc",
-            "Hiragino Sans GB.ttc",
-            "STHeiti Medium.ttc",
-            "STHeiti Light.ttc",
-            "Songti.ttc",
+            "Arial Unicode.ttf",
             "msyh.ttc",
             "NotoSansCJK-Regular.ttc",
         ]
     };
     let mut paths = Vec::new();
     #[cfg(target_os = "macos")]
-    for directory in ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"] {
-        paths.extend(names.iter().map(|name| Path::new(directory).join(name)));
+    if let Some(home) = std::env::var_os("HOME") {
+        paths.push(PathBuf::from(home.clone()).join("Library/Fonts/LXGWWenKai-Regular.ttf"));
+        paths.push(PathBuf::from(home).join("Library/Fonts/LXGWWenKai-Medium.ttf"));
     }
     #[cfg(target_os = "windows")]
     paths.extend(names.iter().map(|name| Path::new("C:/Windows/Fonts").join(name)));
