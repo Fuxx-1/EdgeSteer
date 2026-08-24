@@ -56,20 +56,20 @@ $env:RUST_LOG = "info"
 .\target\release\edgesteer.exe
 ```
 
-## Iced 原生界面
+## Makepad 原生界面
 
 macOS 推荐下载 Release 中对应架构的 `EdgeSteer-*-apple-darwin.dmg`，将 `EdgeSteer.app` 拖到“应用程序”。DNS 引擎由 App bundle 管理；监听 53 端口时，App 会按需启动同一 bundle 内的隐藏授权 helper，不会安装独立的 `edgesteer` 命令行程序或常驻 LaunchDaemon。若机器上有旧版 root 服务，可在设置页点击“移除旧版命令行服务”并授权清理。
 
-`edgesteer-ui` 使用 [Iced](https://github.com/iced-rs/iced) 构建，但它只是可随时退出的配置界面。启动时，轻量的 EdgeSteer Agent 负责菜单栏、DNS 引擎、系统 DNS 与登录启动；设置窗口通过本机受限控制通道向 Agent 发出命令。保存前会调用同一套严格校验，并提供 listener、resolver layer 的 `next` / `fallback`、SRS 规则集、Cloudflare 优选插件和 optimizer 的表单配置。
+`edgesteer-ui` 使用 [Makepad](https://github.com/makepad/makepad) 构建，是可随时退出的独立配置界面。启动时，轻量的 EdgeSteer Agent 负责菜单栏、DNS 引擎、系统 DNS 与登录启动；设置窗口通过本机受限控制通道向 Agent 发出命令。保存前会调用同一套严格校验。界面提供解析层、规则集、CF 优选和优化器的结构化表单，包含 `next` / `fallback`、关键词/SRS 匹配、DoH/DoT/local 上游、候选 CIDR 与兼容性主机；高级 JSON 页面用于批量修改完整文档。
 
 ```sh
 cargo build --locked --release --features gui
 ./target/release/edgesteer-ui
 ```
 
-服务与界面固定使用 `~/edgesteer.json`（Windows 为 `%USERPROFILE%\edgesteer.json`）。界面默认使用中文暗色模式，macOS 使用 `PingFang SC` 渲染中文；语言和黑/白主题位于设置页的下拉框。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口用于编辑配置与查看详细状态。macOS App 是菜单栏代理，不显示 Dock 图标；从菜单栏可重新打开设置窗口。macOS 上可启用“登录时打开”，它注册的是当前 App 的用户级 LaunchAgent；启用系统 DNS 时才请求管理员授权。
+服务与界面固定使用 `~/edgesteer.json`（Windows 为 `%USERPROFILE%\edgesteer.json`）。界面默认使用中文暗色模式，Makepad 包含可复现的中英文和 emoji 字体资源；语言和黑/白主题位于设置页的下拉框。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口用于编辑配置与查看详细状态。macOS App 是菜单栏代理，不显示 Dock 图标；从菜单栏可重新打开设置窗口。macOS 上可启用“登录时打开”，它注册的是当前 App 的用户级 LaunchAgent；启用系统 DNS 时才请求管理员授权。
 
-系统 DNS 只会接管原本使用 DHCP 自动 DNS 的物理服务，并保存一份“由 EdgeSteer 接管”的服务清单，不保存或回放旧 DNS 地址。默认关闭设置窗口会结束 Iced 图形进程并释放 GPU/Metal 资源，Agent 和 DNS 引擎继续在菜单栏运行；从菜单栏明确选择“退出 EdgeSteer”后，Agent 才会先恢复这份清单到自动 DNS，再停止引擎并关闭设置窗口。恢复失败时 App 保持运行，避免留下无法解析的 `127.0.0.1`。手工显式 DNS 不会被覆盖。Linux、Windows 可以构建并使用界面配置 DNS 服务，系统 DNS 注册仍由各自网络管理器处理；Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
+系统 DNS 只会接管原本使用 DHCP 自动 DNS 的物理服务，并保存一份“由 EdgeSteer 接管”的服务清单，不保存或回放旧 DNS 地址。默认关闭设置窗口会结束 Makepad 图形进程并释放界面资源，Agent 和 DNS 引擎继续在菜单栏运行；从菜单栏明确选择“退出 EdgeSteer”后，Agent 才会先恢复这份清单到自动 DNS，再停止引擎并关闭设置窗口。恢复失败时 App 保持运行，避免留下无法解析的 `127.0.0.1`。手工显式 DNS 不会被覆盖。Linux、Windows 可以构建并使用界面配置 DNS 服务，系统 DNS 注册仍由各自网络管理器处理；Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
 
 首次运行建议使用高端口，不要立即改系统 DNS：
 

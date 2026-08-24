@@ -15,13 +15,12 @@ fn main() {
     };
 
     if arguments.iter().any(|argument| argument == "--ui") {
-        select_lightweight_ui_renderer();
         let client = edgesteer::agent::AgentClient::current_user();
         if let Err(error) = client.status() {
             eprintln!("EdgeSteer Agent is unavailable: {error}");
             std::process::exit(1);
         }
-        if let Err(error) = edgesteer::ui::run(edgesteer::ui::UiOptions {
+        if let Err(error) = edgesteer::makepad_ui::run(edgesteer::makepad_ui::UiOptions {
             config_path: options.config_path,
             app_bundle: options.app_bundle,
             agent: client,
@@ -36,18 +35,6 @@ fn main() {
     if let Err(error) = edgesteer::agent::start_or_open(options, open_ui) {
         eprintln!("EdgeSteer Agent stopped: {error}");
         std::process::exit(1);
-    }
-}
-
-fn select_lightweight_ui_renderer() {
-    if std::env::var_os("ICED_BACKEND").is_some() {
-        return;
-    }
-
-    // This process only hosts the short-lived configuration window. Set the
-    // renderer before Iced initializes its event loop or starts worker threads.
-    unsafe {
-        std::env::set_var("ICED_BACKEND", "tiny-skia");
     }
 }
 

@@ -26,18 +26,18 @@ cargo build --locked --release
 .\target\release\edgesteer.exe --check-config
 ```
 
-### Iced native UI
+### Makepad native UI
 
 On macOS, open the matching `EdgeSteer-*-apple-darwin.dmg` release asset, drag `EdgeSteer.app` to Applications, and open it there. The disk image contains the UI and DNS engine together; port 53 may use a hidden elevated helper from that same bundle, but it does not install an `edgesteer` command-line daemon. If the Settings page detects a legacy root service, remove it there with administrator authorization.
 
-`edgesteer-ui` is built with [Iced](https://github.com/iced-rs/iced), but it is a disposable settings window rather than the resolver host. The lightweight EdgeSteer Agent owns the menu bar, DNS engine, system-DNS state, and login integration; the window sends commands only over an authenticated loopback control channel. It edits the exact JSON used by the Agent, applies the same strict validation before saving, and atomically replaces the file so the watcher does not observe a partial document.
+`edgesteer-ui` is built with [Makepad](https://github.com/makepad/makepad) and is a disposable settings window rather than the resolver host. The lightweight EdgeSteer Agent owns the menu bar, DNS engine, system-DNS state, and login integration; the window sends commands only over an authenticated loopback control channel. Resolver layers, SRS rule sets, Cloudflare preferred plugins, and optimizer fields have structured forms, while the Advanced JSON page remains available for bulk edits. It edits the exact JSON used by the Agent, applies the same strict validation before saving, and atomically replaces the file so the watcher does not observe a partial document.
 
 ```sh
 cargo build --locked --release --features gui
 ./target/release/edgesteer-ui
 ```
 
-The service and UI both use the fixed `~/edgesteer.json` path (`%USERPROFILE%\edgesteer.json` on Windows), never another working-directory file. The UI covers the listener, resolver-layer `next` / `fallback` links, SRS rule sets, Cloudflare preferred-IP plugins, and the optimizer. It opens in Chinese dark mode; Settings provides Chinese/English and Dark/Light pick lists. The menu bar is the primary control surface, while Settings shows the Agent-managed listener, an optional per-user login item, and physical network-service state. On macOS, the packaged App runs as a menu-bar agent with no Dock entry. Closing Settings terminates the Iced process and releases its GPU/Metal resources; the menu-bar item opens a fresh Settings process when needed. Enabling system DNS requests administrator authorization only after the user selects it. Linux and Windows build and use the UI to configure the DNS service; their network managers remain responsible for system DNS registration. Linux menu-bar support requires GTK 3 and an Ayatana AppIndicator runtime.
+The service and UI both use the fixed `~/edgesteer.json` path (`%USERPROFILE%\edgesteer.json` on Windows), never another working-directory file. The UI covers the listener, resolver-layer `next` / `fallback` links, SRS rule sets, Cloudflare preferred-IP plugins, and the optimizer through structured forms, with an Advanced JSON page for the complete document. It opens in Chinese dark mode; Settings provides Chinese/English and Dark/Light pick lists. The menu bar is the primary control surface, while Settings shows the Agent-managed listener, an optional per-user login item, and physical network-service state. On macOS, the packaged App runs as a menu-bar agent with no Dock entry. Closing Settings terminates the Makepad process and releases its UI resources; the menu-bar item opens a fresh Settings process when needed. Enabling system DNS requests administrator authorization only after the user selects it. Linux and Windows build and use the UI to configure the DNS service; their network managers remain responsible for system DNS registration. Linux menu-bar support requires GTK 3 and an Ayatana AppIndicator runtime.
 
 ### Test on a high port
 
@@ -70,7 +70,7 @@ Only consider switching to port 53 after high-port queries work. The default lis
 
 On a DHCP macOS network, `type: "local"` can be used directly as system DNS: after a physical service points at the local listener, EdgeSteer reads that service's current DHCP option 6 DNS. It does not save old DNS addresses; a network change or DHCP renewal is picked up on the next refresh.
 
-Do not write DHCP DNS addresses back as static settings when disabling it. In `EdgeSteer.app`, use Settings to enable system DNS only after the listener is ready. EdgeSteer records the affected service names, not historical DNS addresses. By default, closing Settings terminates the Iced process while the Agent keeps the resolver running. Choose `Quit EdgeSteer` explicitly from the menu bar to restore only those services to automatic DNS before the Agent stops the resolver and closes any Settings process. If that restoration fails, the App remains open instead of leaving system DNS on loopback. A no-snapshot workflow cannot faithfully restore user-entered manual DNS, so the App refuses to replace it.
+Do not write DHCP DNS addresses back as static settings when disabling it. In `EdgeSteer.app`, use Settings to enable system DNS only after the listener is ready. EdgeSteer records the affected service names, not historical DNS addresses. By default, closing Settings terminates the Makepad process while the Agent keeps the resolver running. Choose `Quit EdgeSteer` explicitly from the menu bar to restore only those services to automatic DNS before the Agent stops the resolver and closes any Settings process. If that restoration fails, the App remains open instead of leaving system DNS on loopback. A no-snapshot workflow cannot faithfully restore user-entered manual DNS, so the App refuses to replace it.
 
 `127.0.0.1:53535` is for testing or an explicit front end such as sing-box. Ordinary operating-system DNS settings have no port field, so direct takeover requires EdgeSteer on `127.0.0.1:53`. Linux and Windows still need their network managers to retain or expose the real underlay DNS.
 

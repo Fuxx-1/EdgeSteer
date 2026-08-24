@@ -1,6 +1,6 @@
 [package]
 name = "edgesteer"
-version = "1.0.3"
+version = "1.0.4-alpha.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Adaptive DNS steering for preferred Cloudflare edge IPs"
@@ -13,7 +13,7 @@ categories = ["command-line-utilities", "network-programming"]
 
 [features]
 default = []
-gui = ["dep:iced", "dep:iced_aw", "dep:png", "dep:tray-icon", "dep:winit"]
+gui = ["dep:makepad-widgets", "dep:png", "dep:tray-icon", "dep:winit"]
 
 [[bin]]
 name = "edgesteer-ui"
@@ -39,10 +39,15 @@ tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webpki-roots = "0.26"
-iced = { version = "0.12.1", optional = true, features = ["image", "tokio"] }
-iced_aw = { version = "0.9.3", default-features = false, features = ["floating_element", "modal"], optional = true }
+makepad-widgets = { version = "1.0.0", optional = true }
 png = { version = "0.18", optional = true }
 winit = { version = "0.29.15", optional = true }
+
+[patch.crates-io]
+# makepad-widgets 1.0.0 ships a desktop light theme that points its CJK and
+# emoji fonts at resources absent from that crate. Keep the released API while
+# using the crate's declared font dependencies instead.
+makepad-widgets = { path = "third_party/makepad-widgets" }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.24.1", default-features = false, optional = true }

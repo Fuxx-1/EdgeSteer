@@ -34,8 +34,8 @@ flowchart TB
 | `src/rule_sets.rs` | 原生加载 sing-box SRS v1–v5 的域名规则；本地/远程来源定时刷新，失败保留上一份可用规则。 |
 | `src/state.rs` | 用 `ArcSwap` 保存运行时快照、规则集和 Cloudflare 网段，并缓存 DoH client。 |
 | `src/watcher.rs` | 监听配置文件，约 250 ms debounce，校验成功后原子替换；非法文件继续使用旧配置。 |
-| `src/agent.rs` | 轻量常驻 Agent：菜单栏、DNS 引擎生命周期、系统 DNS、登录启动与本机控制通道。它不加载 Iced 或 GPU renderer。 |
-| `src/ui.rs` | 独立的 Iced 配置窗口。关闭窗口即退出该进程并释放 GPU/Metal；Agent 和 DNS 引擎继续在菜单栏运行。 |
+| `src/agent.rs` | 轻量常驻 Agent：菜单栏、DNS 引擎生命周期、系统 DNS、登录启动与本机控制通道。它不加载 Makepad 或图形 renderer。 |
+| `src/makepad_ui.rs` | 独立的 Makepad 配置窗口。关闭窗口即退出该进程并释放界面资源；Agent 和 DNS 引擎继续在菜单栏运行。 |
 
 ## 一次请求的生命周期
 
@@ -70,9 +70,9 @@ listener 地址和 `allow_remote` 变化不能动态重绑。文件可以被接�
 
 ## App 生命周期
 
-打包 App 启动后先运行 EdgeSteer Agent。Agent 使用原生事件循环和菜单栏图标，持有 DNS runtime；Iced 配置窗口只在首次启动或从菜单栏打开设置时作为单独子进程运行。控制通道只监听 `127.0.0.1`，并要求状态文件中的随机令牌，因此 UI 不直接持有 DNS runtime。
+打包 App 启动后先运行 EdgeSteer Agent。Agent 使用原生事件循环和菜单栏图标，持有 DNS runtime；Makepad 配置窗口只在首次启动或从菜单栏打开设置时作为单独子进程运行。控制通道只监听 `127.0.0.1`，并要求状态文件中的随机令牌，因此 UI 不直接持有 DNS runtime。
 
-默认关闭设置窗口会结束 UI 子进程，而不是把窗口和 wgpu/Metal renderer 隐藏在后台。这样 DNS、菜单栏和系统 DNS 接管保持可用，但完整 GUI 资源会立即释放。菜单栏再次打开设置时会创建一个新的 UI 进程。明确选择“退出 EdgeSteer”时，Agent 先恢复它接管的系统 DNS，再停止 resolver，最后关闭仍在运行的设置窗口。
+默认关闭设置窗口会结束 UI 子进程，而不是把窗口和 Makepad renderer 隐藏在后台。这样 DNS、菜单栏和系统 DNS 接管保持可用，但完整 GUI 资源会立即释放。菜单栏再次打开设置时会创建一个新的 UI 进程。明确选择“退出 EdgeSteer”时，Agent 先恢复它接管的系统 DNS，再停止 resolver，最后关闭仍在运行的设置窗口。
 
 ## 安全边界
 
