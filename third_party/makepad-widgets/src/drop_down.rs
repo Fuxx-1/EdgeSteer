@@ -33,11 +33,11 @@ live_design!{
             instance disabled: 0.0,
             instance down: 0.0,
 
-            uniform color: (THEME_COLOR_LABEL_INNER)
-            uniform color_hover: (THEME_COLOR_LABEL_INNER_HOVER)
-            uniform color_focus: (THEME_COLOR_LABEL_INNER_FOCUS)
-            uniform color_down: (THEME_COLOR_LABEL_INNER_DOWN)
-            uniform color_disabled: (THEME_COLOR_LABEL_INNER_DISABLED)
+            uniform color: (THEME_COLOR_TEXT)
+            uniform color_hover: (THEME_COLOR_TEXT_HOVER)
+            uniform color_focus: (THEME_COLOR_TEXT_FOCUS)
+            uniform color_down: (THEME_COLOR_TEXT_DOWN)
+            uniform color_disabled: (THEME_COLOR_TEXT_DISABLED)
 
             text_style: <THEME_FONT_REGULAR> {
                 font_size: (THEME_FONT_SIZE_P)
@@ -98,11 +98,11 @@ live_design!{
             uniform border_color_2_down: (THEME_COLOR_BEVEL_OUTSET_2_DOWN)
             uniform border_color_2_disabled: (THEME_COLOR_BEVEL_OUTSET_2_DISABLED)
 
-            uniform arrow_color: (THEME_COLOR_LABEL_INNER)
-            uniform arrow_color_hover: (THEME_COLOR_LABEL_INNER_HOVER)
-            uniform arrow_color_focus: (THEME_COLOR_LABEL_INNER_FOCUS)
-            uniform arrow_color_down: (THEME_COLOR_LABEL_INNER_DOWN)
-            uniform arrow_color_disabled: (THEME_COLOR_LABEL_INNER_DISABLED)
+            uniform arrow_color: (THEME_COLOR_ICON)
+            uniform arrow_color_hover: (THEME_COLOR_ICON_ACTIVE)
+            uniform arrow_color_focus: (THEME_COLOR_ICON_ACTIVE)
+            uniform arrow_color_down: (THEME_COLOR_ICON_ACTIVE)
+            uniform arrow_color_disabled: (THEME_COLOR_ICON_DISABLED)
             
             fn pixel(self) -> vec4 {
                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
@@ -671,14 +671,36 @@ pub enum DropDownAction {
 }
 
 impl DropDown {
+
+    fn value_for_index(&self, index: usize) -> LiveValue {
+        self.values
+            .get(index)
+            .cloned()
+            .unwrap_or(LiveValue::Int64(index as i64))
+    }
+
+    fn clamp_selected_item(&mut self) {
+        self.selected_item = self
+            .selected_item
+            .min(self.labels.len().saturating_sub(1));
+    }
     
     pub fn set_active(&mut self, cx: &mut Cx) {
+        if self.labels.is_empty() {
+            return;
+        }
+        self.clamp_selected_item();
+        let Some(popup_menu) = self.popup_menu else {
+            return;
+        };
+        let global = cx.global::<PopupMenuGlobal>().clone();
+        let mut map = global.map.borrow_mut();
+        let Some(lb) = map.get_mut(&popup_menu) else {
+            return;
+        };
         self.is_active = true;
         self.draw_bg.apply_over(cx, live!{active: 1.0});
         self.draw_bg.redraw(cx);
-        let global = cx.global::<PopupMenuGlobal>().clone();
-        let mut map = global.map.borrow_mut();
-        let lb = map.get_mut(&self.popup_menu.unwrap()).unwrap();
         let node_id = LiveId(self.selected_item as u64).into();
         lb.init_select_item(node_id);
         cx.sweep_lock(self.draw_bg.area());
@@ -801,7 +823,11 @@ impl Widget for DropDown {
             // ok so how will we solve this one
             let global = cx.global::<PopupMenuGlobal>().clone();
             let mut map = global.map.borrow_mut();
-            let menu = map.get_mut(&self.popup_menu.unwrap()).unwrap();
+            let popup_menu = self.popup_menu.expect("popup menu checked above");
+            let Some(menu) = map.get_mut(&popup_menu) else {
+                self.set_closed(cx);
+                return;
+            };
             let mut close = false;
             menu.handle_event_with(cx, event, self.draw_bg.area(), &mut | cx, action | {
                 match action {
@@ -810,10 +836,13 @@ impl Widget for DropDown {
                     }
                     PopupMenuAction::WasSelected(node_id) => {
                         //dispatch_action(cx, PopupMenuAction::WasSelected(node_id));
-                        self.selected_item = node_id.0.0 as usize;
-                        cx.widget_action(uid, &scope.path, DropDownAction::Select(self.selected_item, self.values.get(self.selected_item).cloned().unwrap_or(LiveValue::None)));
-                        self.draw_bg.redraw(cx);
-                        close = true;
+                        let index = node_id.0.0 as usize;
+                        if index < self.labels.len() {
+                            self.selected_item = index;
+                            cx.widget_action(uid, &scope.path, DropDownAction::Select(index, self.value_for_index(index)));
+                            self.draw_bg.redraw(cx);
+                            close = true;
+                        }
                     }
                     _ => ()
                 }
@@ -844,17 +873,17 @@ impl Widget for DropDown {
             }
             Hit::KeyDown(ke) => match ke.key_code {
                 KeyCode::ArrowUp => {
-                    if self.selected_item > 0 {
+                    if !self.labels.is_empty() && self.selected_item > 0 {
                         self.selected_item -= 1;
-                        cx.widget_action(uid, &scope.path, DropDownAction::Select(self.selected_item, self.values.get(self.selected_item).cloned().unwrap_or(LiveValue::None)));
+                        cx.widget_action(uid, &scope.path, DropDownAction::Select(self.selected_item, self.value_for_index(self.selected_item)));
                         self.set_closed(cx);
                         self.draw_bg.redraw(cx);
                     }
                 }
                 KeyCode::ArrowDown => {
-                    if self.values.len() > 0 && self.selected_item < self.values.len() - 1 {
+                    if !self.labels.is_empty() && self.selected_item < self.labels.len() - 1 {
                         self.selected_item += 1;
-                        cx.widget_action(uid, &scope.path, DropDownAction::Select(self.selected_item, self.values.get(self.selected_item).cloned().unwrap_or(LiveValue::None)));
+                        cx.widget_action(uid, &scope.path, DropDownAction::Select(self.selected_item, self.value_for_index(self.selected_item)));
                         self.set_closed(cx);
                         self.draw_bg.redraw(cx);
                     }
@@ -900,6 +929,9 @@ impl DropDownRef {
     
     pub fn set_labels_with<F:FnMut(&mut String)>(&self, cx: &mut Cx, mut f:F) {
         if let Some(mut inner) = self.borrow_mut() {
+            if inner.is_active {
+                inner.set_closed(cx);
+            }
             let mut i = 0;
             loop {
                 if i>=inner.labels.len(){
@@ -914,13 +946,28 @@ impl DropDownRef {
                 i+=1;
             }
             inner.labels.truncate(i);
+            if inner.values.len() != inner.labels.len() {
+                inner.values = (0..inner.labels.len())
+                    .map(|index| LiveValue::Int64(index as i64))
+                    .collect();
+            }
+            inner.clamp_selected_item();
             inner.draw_bg.redraw(cx);
         }
     }
     
     pub fn set_labels(&self, cx: &mut Cx, labels: Vec<String>) {
         if let Some(mut inner) = self.borrow_mut() {
+            if inner.is_active {
+                inner.set_closed(cx);
+            }
             inner.labels = labels;
+            if inner.values.len() != inner.labels.len() {
+                inner.values = (0..inner.labels.len())
+                    .map(|index| LiveValue::Int64(index as i64))
+                    .collect();
+            }
+            inner.clamp_selected_item();
             inner.draw_bg.redraw(cx);
         }
     }
@@ -948,7 +995,7 @@ impl DropDownRef {
         if let Some(item) = actions.find_widget_action(self.widget_uid()) {
             if let DropDownAction::Select(id, _) = item.cast() {
                  if let Some(inner) = self.borrow() {
-                    return Some(inner.labels[id].clone())
+                    return inner.labels.get(id).cloned()
                 }
             }
         }
@@ -973,7 +1020,7 @@ impl DropDownRef {
     
     pub fn selected_label(&self) -> String {
         if let Some(inner) = self.borrow() {
-            return inner.labels[inner.selected_item].clone()
+            return inner.labels.get(inner.selected_item).cloned().unwrap_or_default()
         }
         "".to_string()
     }
