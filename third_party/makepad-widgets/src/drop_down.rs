@@ -108,37 +108,6 @@ live_design!{
                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                 let dither = Math::random_2d(self.pos.xy) * 0.04 * self.color_dither;
 
-                // lets draw a little triangle in the corner
-                let c = vec2(self.rect_size.x - 10.0, self.rect_size.y * 0.5)
-                let sz = 2.5;
-                let offset = 1.;
-                let offset_x = 2.;
-                
-                sdf.move_to(c.x - sz - offset_x, c.y - sz + offset);
-                sdf.line_to(c.x + sz - offset_x, c.y - sz + offset);
-                sdf.line_to(c.x - offset_x, c.y + sz * 0.25 + offset);
-                sdf.close_path();
-                
-                sdf.fill_keep(
-                    mix(
-                        mix(
-                            mix(
-                                self.arrow_color,
-                                self.arrow_color_focus,
-                                self.focus
-                            ),
-                            mix(
-                                self.arrow_color_hover,
-                                self.arrow_color_down,
-                                self.down
-                            ),
-                            self.hover
-                        ),
-                        self.arrow_color_disabled,
-                        self.disabled
-                    )
-                );
-
                 let border_sz_uv = vec2(
                     self.border_size / self.rect_size.x,
                     self.border_size / self.rect_size.y
@@ -211,6 +180,28 @@ live_design!{
                         self.disabled
                     ), self.border_size
                 )
+
+                // Draw the arrow after the field fill so it is not covered by
+                // the box. This is especially visible on the light theme.
+                let c = vec2(self.rect_size.x - 10.0, self.rect_size.y * 0.5)
+                let sz = 2.5;
+                let offset = 1.;
+                let offset_x = 2.;
+                sdf.move_to(c.x - sz - offset_x, c.y - sz + offset);
+                sdf.line_to(c.x + sz - offset_x, c.y - sz + offset);
+                sdf.line_to(c.x - offset_x, c.y + sz * 0.25 + offset);
+                sdf.close_path();
+                sdf.fill(
+                    mix(
+                        mix(
+                            mix(self.arrow_color, self.arrow_color_focus, self.focus),
+                            mix(self.arrow_color_hover, self.arrow_color_down, self.down),
+                            self.hover
+                        ),
+                        self.arrow_color_disabled,
+                        self.disabled
+                    )
+                );
 
 
 
@@ -952,7 +943,7 @@ impl DropDownRef {
                     .collect();
             }
             inner.clamp_selected_item();
-            inner.draw_bg.redraw(cx);
+            inner.redraw(cx);
         }
     }
     
@@ -968,7 +959,7 @@ impl DropDownRef {
                     .collect();
             }
             inner.clamp_selected_item();
-            inner.draw_bg.redraw(cx);
+            inner.redraw(cx);
         }
     }
     

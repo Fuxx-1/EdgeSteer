@@ -22,10 +22,10 @@ live_design!{
             instance hover: 0.0
             instance disabled: 0.0
 
-            uniform color: (THEME_COLOR_LABEL_INNER)
-            uniform color_hover: (THEME_COLOR_LABEL_INNER_HOVER)
-            uniform color_active: (THEME_COLOR_LABEL_INNER_ACTIVE)
-            uniform color_disabled: (THEME_COLOR_LABEL_INNER_DISABLED)
+            uniform color: (THEME_COLOR_TEXT)
+            uniform color_hover: (THEME_COLOR_TEXT_HOVER)
+            uniform color_active: (THEME_COLOR_TEXT_FOCUS)
+            uniform color_disabled: (THEME_COLOR_TEXT_DISABLED)
 
             text_style: <THEME_FONT_REGULAR> {
                 font_size: (THEME_FONT_SIZE_P),
@@ -878,4 +878,3 @@ impl PopupMenu {
         }
     }
 }
-
