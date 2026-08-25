@@ -604,7 +604,7 @@ pub struct DropDown {
     #[animator] animator: Animator,
     
     #[redraw] #[live] draw_bg: DrawQuad,
-    #[live] draw_text: DrawLabelText,
+    #[redraw] #[live] draw_text: DrawLabelText,
     
     #[walk] walk: Walk,
     
@@ -831,7 +831,7 @@ impl Widget for DropDown {
                         if index < self.labels.len() {
                             self.selected_item = index;
                             cx.widget_action(uid, &scope.path, DropDownAction::Select(index, self.value_for_index(index)));
-                            self.draw_bg.redraw(cx);
+                            self.redraw(cx);
                             close = true;
                         }
                     }
@@ -868,7 +868,7 @@ impl Widget for DropDown {
                         self.selected_item -= 1;
                         cx.widget_action(uid, &scope.path, DropDownAction::Select(self.selected_item, self.value_for_index(self.selected_item)));
                         self.set_closed(cx);
-                        self.draw_bg.redraw(cx);
+                        self.redraw(cx);
                     }
                 }
                 KeyCode::ArrowDown => {
@@ -876,7 +876,7 @@ impl Widget for DropDown {
                         self.selected_item += 1;
                         cx.widget_action(uid, &scope.path, DropDownAction::Select(self.selected_item, self.value_for_index(self.selected_item)));
                         self.set_closed(cx);
-                        self.draw_bg.redraw(cx);
+                        self.redraw(cx);
                     }
                 },
                 _ => ()
@@ -998,7 +998,7 @@ impl DropDownRef {
             let new_selected = item.min(inner.labels.len().max(1) - 1);
             if new_selected != inner.selected_item{
                 inner.selected_item = new_selected;
-                inner.draw_bg.redraw(cx);
+                inner.redraw(cx);
             }
         }
     }
@@ -1021,7 +1021,7 @@ impl DropDownRef {
             if let Some(index) = inner.labels.iter().position( | v | v == label) {
                 if inner.selected_item != index{
                     inner.selected_item = index;
-                    inner.draw_bg.redraw(cx);
+                    inner.redraw(cx);
                 }
             }
         }
