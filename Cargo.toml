@@ -1,6 +1,6 @@
 [package]
 name = "edgesteer"
-version = "1.0.4-alpha.7"
+version = "1.0.4-alpha.8"
 edition = "2024"
 rust-version = "1.85"
 description = "Adaptive DNS steering for preferred Cloudflare edge IPs"
