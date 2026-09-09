@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Check repository privacy
+        run: sh scripts/check-privacy.sh --tracked
       - uses: dtolnay/rust-toolchain@1.85.0
         with:
           components: rustfmt, clippy

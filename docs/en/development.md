@@ -30,7 +30,7 @@ Run before committing:
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked --all-targets
-cargo build --locked --release
+./scripts/build-release.sh
 ```
 
 Validate only the configuration:
@@ -52,7 +52,7 @@ Tests do not depend on CI access to Cloudflare or Tencent. Network integration t
 
 ## CI
 
-`.github/workflows/ci.yml` runs rustfmt, Clippy, and tests on Linux x86_64, then tests the remaining five native Linux, macOS, and Windows targets. Linux x86_64 is not repeated in the native matrix because the quality job already covers it. Dependency caches are keyed by target and lockfile, obsolete runs for the same branch are cancelled, and a failing native target stops queued peers. Release tags still build all six installable native assets. CI uses the lockfile and Rust 1.85; reproduce those commands locally.
+`.github/workflows/ci.yml` runs rustfmt, Clippy, tests, and a first-party privacy scan on Linux x86_64, then tests the remaining five native Linux, macOS, and Windows targets. Linux x86_64 is not repeated in the native matrix because the quality job already covers it. Dependency caches are keyed by target and lockfile, obsolete runs for the same branch are cancelled, and a failing native target stops queued peers. Release tags still build all six installable native assets and scan the binaries before packaging. CI uses the lockfile and Rust 1.85; reproduce those commands locally.
 
 ## Releases
 
@@ -71,7 +71,7 @@ git tag -a v0.4.0 -m "EdgeSteer v0.4.0"
 git push origin v0.4.0
 ```
 
-Before a release, ensure the worktree is clean, `cargo test --locked --all-targets` passes, the example configuration validates, and the release workflow builds on every target runner.
+Before a release, ensure the worktree is clean, `cargo test --locked --all-targets` passes, the example configuration validates, and the release workflow builds on every target runner. Use `scripts/build-release.sh` on macOS/Linux or `scripts/build-release.ps1` on Windows for a binary that might be distributed: it remaps local compiler paths before the artifact privacy check runs.
 
 ## Documentation maintenance
 

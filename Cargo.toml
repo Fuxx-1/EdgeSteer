@@ -49,6 +49,7 @@ winit = { version = "0.29.15", optional = true }
 # using the crate's declared font dependencies instead.
 makepad-widgets = { path = "third_party/makepad-widgets" }
 makepad-platform = { path = "third_party/makepad-platform" }
+makepad-derive-live = { path = "third_party/makepad-derive-live" }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.24.1", default-features = false, optional = true }

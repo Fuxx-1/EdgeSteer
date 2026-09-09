@@ -1727,8 +1727,6 @@ dependencies = [
 [[package]]
 name = "makepad-derive-live"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ee892c9f885bce664b8d3a7a890ce271b3d6960cd7dd59c9a964c5ef679db44"
 dependencies = [
  "makepad-live-id",
  "makepad-micro-proc-macro",

@@ -41,7 +41,7 @@ Rust 1.85 or newer is required. Release assets target x86_64 and ARM64 on Linux,
 git clone https://github.com/Fuxx-1/EdgeSteer.git
 cd EdgeSteer
 cp config.example.json "$HOME/edgesteer.json"
-cargo build --locked --release
+./scripts/build-release.sh
 ./target/release/edgesteer --check-config
 RUST_LOG=info ./target/release/edgesteer
 ```
@@ -50,7 +50,7 @@ PowerShell:
 
 ```powershell
 Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
-cargo build --locked --release
+.\scripts\build-release.ps1
 .\target\release\edgesteer.exe --check-config
 $env:RUST_LOG = "info"
 .\target\release\edgesteer.exe

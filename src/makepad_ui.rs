@@ -335,7 +335,9 @@ live_design! {
                             height: 58.
                             flow: Right
                             align: {y: 0.5}
-                            padding: {left: 26., right: 26., top: 0., bottom: 0.}
+                            // macOS draws its traffic-light window controls over the content
+                            // area. Keep the brand mark outside that reserved title-bar region.
+                            padding: {left: 84., right: 26., top: 0., bottom: 0.}
                             spacing: 10.
                             draw_bg: {
                                 color: (THEME_COLOR_OUTSET)
@@ -2101,30 +2103,24 @@ impl MatchEvent for EdgeSteerMakepadApp {
         let ui = self.ui.clone();
 
         if ui.button(id!(nav_overview)).clicked(actions) {
-            self.state.page = Page::Overview;
-            self.sync_page(cx);
+            self.select_page(cx, Page::Overview);
         }
         if ui.button(id!(nav_resolver)).clicked(actions) {
-            self.state.page = Page::Resolver;
-            self.sync_page(cx);
+            self.select_page(cx, Page::Resolver);
         }
         if ui.button(id!(nav_rules)).clicked(actions) {
-            self.state.page = Page::RuleSets;
-            self.sync_page(cx);
+            self.select_page(cx, Page::RuleSets);
         }
         if ui.button(id!(nav_cloudflare)).clicked(actions) {
-            self.state.page = Page::Cloudflare;
-            self.sync_page(cx);
+            self.select_page(cx, Page::Cloudflare);
         }
         if ui.button(id!(nav_json)).clicked(actions) {
-            self.state.page = Page::Json;
-            self.sync_page(cx);
+            self.select_page(cx, Page::Json);
         }
 
         self.handle_form_actions(cx, actions);
         if ui.button(id!(nav_system)).clicked(actions) {
-            self.state.page = Page::System;
-            self.sync_page(cx);
+            self.select_page(cx, Page::System);
         }
 
         if let Some(contents) = ui.text_input(id!(config_editor)).changed(actions) {
@@ -2759,6 +2755,19 @@ impl EdgeSteerMakepadApp {
         self.ui
             .view(id!(system_page))
             .set_visible(cx, self.state.page == Page::System);
+    }
+
+    fn select_page(&mut self, cx: &mut Cx, page: Page) {
+        self.state.page = page;
+
+        // The structured editors live in initially hidden pages. Makepad can
+        // discard their draw areas before first display, so refresh their
+        // dynamic labels after the page is made visible instead of relying on
+        // the startup-time redraw request.
+        self.sync_ui(cx, false);
+        self.sync_structured_controls(cx);
+        self.ui.redraw(cx);
+        cx.redraw_all();
     }
 
     fn sync_document_status(&mut self, cx: &mut Cx) {

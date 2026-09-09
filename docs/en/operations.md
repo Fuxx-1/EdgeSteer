@@ -14,7 +14,7 @@ Rust 1.85 or newer is required:
 git clone https://github.com/Fuxx-1/EdgeSteer.git
 cd EdgeSteer
 cp config.example.json "$HOME/edgesteer.json"
-cargo build --locked --release
+./scripts/build-release.sh
 ./target/release/edgesteer --check-config
 ```
 
@@ -22,7 +22,7 @@ PowerShell:
 
 ```powershell
 Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
-cargo build --locked --release
+.\scripts\build-release.ps1
 .\target\release\edgesteer.exe --check-config
 ```
 
@@ -33,7 +33,7 @@ On macOS, open the matching `EdgeSteer-*-apple-darwin.dmg` release asset, drag `
 `edgesteer-ui` is built with [Makepad](https://github.com/makepad/makepad) and is a disposable settings window rather than the resolver host. The lightweight EdgeSteer Agent owns the menu bar, DNS engine, system-DNS state, and login integration; the window sends commands only over an authenticated loopback control channel. Resolver layers, SRS rule sets, Cloudflare preferred plugins, and optimizer fields have structured forms, while the Advanced JSON page remains available for bulk edits. It edits the exact JSON used by the Agent, applies the same strict validation before saving, and atomically replaces the file so the watcher does not observe a partial document.
 
 ```sh
-cargo build --locked --release --features gui
+./scripts/build-release.sh --features gui
 ./target/release/edgesteer-ui
 ```
 

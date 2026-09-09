@@ -1,0 +1,2 @@
+# Preserve the exact upstream formatting in the vendored Makepad macro crate.
+third_party/makepad-derive-live/** -whitespace

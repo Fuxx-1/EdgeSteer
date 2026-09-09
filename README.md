@@ -41,7 +41,7 @@ flowchart TB
 git clone https://github.com/Fuxx-1/EdgeSteer.git
 cd EdgeSteer
 cp config.example.json "$HOME/edgesteer.json"
-cargo build --locked --release
+./scripts/build-release.sh
 ./target/release/edgesteer --check-config
 RUST_LOG=info ./target/release/edgesteer
 ```
@@ -50,7 +50,7 @@ Windows PowerShell：
 
 ```powershell
 Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
-cargo build --locked --release
+.\scripts\build-release.ps1
 .\target\release\edgesteer.exe --check-config
 $env:RUST_LOG = "info"
 .\target\release\edgesteer.exe
@@ -63,7 +63,7 @@ macOS 推荐下载 Release 中对应架构的 `EdgeSteer-*-apple-darwin.dmg`，�
 `edgesteer-ui` 使用 [Makepad](https://github.com/makepad/makepad) 构建，是可随时退出的独立配置界面。启动时，轻量的 EdgeSteer Agent 负责菜单栏、DNS 引擎、系统 DNS 与登录启动；设置窗口通过本机受限控制通道向 Agent 发出命令。保存前会调用同一套严格校验。界面提供解析层、规则集、CF 优选和优化器的结构化表单，包含 `next` / `fallback`、关键词/SRS 匹配、DoH/DoT/local 上游、候选 CIDR 与兼容性主机；高级 JSON 页面用于批量修改完整文档。
 
 ```sh
-cargo build --locked --release --features gui
+./scripts/build-release.sh --features gui
 ./target/release/edgesteer-ui
 ```
 

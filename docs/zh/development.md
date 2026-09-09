@@ -30,7 +30,7 @@ EdgeSteer 是 Rust 2024 项目，MSRV 为 Rust 1.85。文档、配置和源码�
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked --all-targets
-cargo build --locked --release
+./scripts/build-release.sh
 ```
 
 只校验配置：
@@ -52,7 +52,7 @@ cargo run --release -- --check-config
 
 ## CI
 
-`.github/workflows/ci.yml` 在 Linux x86_64 上执行 rustfmt、Clippy 和测试，再测试其余五个 Linux、macOS、Windows 原生目标。Linux x86_64 已由质量任务覆盖，不在原生矩阵中重复构建。依赖缓存按目标与锁文件隔离；同一分支过期的运行会取消，任一原生目标失败会停止尚未开始的同伴任务。发布 tag 仍会构建全部六个原生安装包。CI 使用锁文件和 Rust 1.85 toolchain，开发者本地应尽量复现同样命令。
+`.github/workflows/ci.yml` 在 Linux x86_64 上执行 rustfmt、Clippy、测试和第一方文件隐私扫描，再测试其余五个 Linux、macOS、Windows 原生目标。Linux x86_64 已由质量任务覆盖，不在原生矩阵中重复构建。依赖缓存按目标与锁文件隔离；同一分支过期的运行会取消，任一原生目标失败会停止尚未开始的同伴任务。发布 tag 仍会构建全部六个原生安装包，并在打包前扫描二进制。CI 使用锁文件和 Rust 1.85 toolchain，开发者本地应尽量复现同样命令。
 
 ## Release
 
@@ -71,7 +71,7 @@ git tag -a v0.4.0 -m "EdgeSteer v0.4.0"
 git push origin v0.4.0
 ```
 
-发布前至少确认工作区干净、`cargo test --locked --all-targets` 通过、配置示例可用，并且 release workflow 能在目标 runner 上完成构建。
+发布前至少确认工作区干净、`cargo test --locked --all-targets` 通过、配置示例可用，并且 release workflow 能在目标 runner 上完成构建。可能被分发的二进制在 macOS/Linux 使用 `scripts/build-release.sh` 构建，在 Windows 使用 `scripts/build-release.ps1` 构建；脚本会先重映射本机编译路径，再执行产物隐私检查。
 
 ## 文档维护
 

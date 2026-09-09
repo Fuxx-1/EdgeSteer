@@ -18,6 +18,9 @@ jobs:
     outputs:
       prerelease: ${{ steps.classify.outputs.prerelease }}
     steps:
+      - uses: actions/checkout@v5
+      - name: Check repository privacy
+        run: sh scripts/check-privacy.sh --tracked
       - id: classify
         shell: bash
         env:
@@ -117,7 +120,15 @@ jobs:
       - name: Install Linux tray dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libasound2-dev libpulse-dev
-      - run: cargo build --locked --release --features gui --target ${{ matrix.target }}
+      - name: Build release binaries
+        shell: bash
+        run: ./scripts/build-release.sh --features gui --target ${{ matrix.target }}
+      - name: Check built artifact privacy
+        shell: bash
+        run: |
+          ./scripts/check-artifact-privacy.sh \
+            target/${{ matrix.target }}/release/edgesteer \
+            target/${{ matrix.target }}/release/edgesteer-ui
       - name: Package Unix archive
         if: matrix.archive == 'tar'
         shell: bash
