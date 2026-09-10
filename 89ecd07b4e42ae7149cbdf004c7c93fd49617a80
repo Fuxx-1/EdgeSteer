@@ -1,0 +1,25 @@
+Cargo.toml
+  s_d07f5ae815a216::t_367018e54ac8fb 3
+third_party/makepad-widgets/src/drop_down.rs
+  s_d07f5ae815a216::t_36cba247eb6c6b 36-40,101-105,674-686,689-695,698-700,839-845,876,878,886,932-934,954,970,998,1023
+  s_d07f5ae815a216::t_65e53ca739950f 884,949-953,961-963,965-969
+  s_d07f5ae815a216::t_c9d152897bf297 696-697,826-830
+Cargo.lock
+  s_d07f5ae815a216::t_3ebb3c36cf23ae 689
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "89ecd07b4e42ae7149cbdf004c7c93fd49617a80",
+  "prompts": {},
+  "sessions": {
+    "s_d07f5ae815a216": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe94d-165d-7400-b09f-a3bc3ce95456",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Fuxx-1"
+    }
+  }
+}
