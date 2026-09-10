@@ -1,0 +1,386 @@
+.github/workflows/release.yml
+  h_65247a649a0e70 130,151
+Cargo.toml
+  h_65247a649a0e70 51
+packaging/macos/build-dmg.sh
+  h_65247a649a0e70 37-40
+third_party/makepad-platform/.cargo-ok
+  h_65247a649a0e70 1
+third_party/makepad-platform/.cargo_vcs_info.json
+  h_65247a649a0e70 1-7
+third_party/makepad-platform/Cargo.lock
+  h_65247a649a0e70 1-550
+third_party/makepad-platform/Cargo.toml
+  h_65247a649a0e70 1-151
+third_party/makepad-platform/Cargo.toml.orig
+  h_65247a649a0e70 1-114
+third_party/makepad-platform/build.rs
+  h_65247a649a0e70 1-73
+third_party/makepad-platform/src/action.rs
+  h_65247a649a0e70 1-164
+third_party/makepad-platform/src/animator.rs
+  h_65247a649a0e70 1-1226
+third_party/makepad-platform/src/app_main.rs
+  h_65247a649a0e70 1-179
+third_party/makepad-platform/src/area.rs
+  h_65247a649a0e70 1-477
+third_party/makepad-platform/src/audio.rs
+  h_65247a649a0e70 1-301
+third_party/makepad-platform/src/audio_stream.rs
+  h_65247a649a0e70 1-168
+third_party/makepad-platform/src/component_list.rs
+  h_65247a649a0e70 1-125
+third_party/makepad-platform/src/component_map.rs
+  h_65247a649a0e70 1-90
+third_party/makepad-platform/src/cursor.rs
+  h_65247a649a0e70 1-264
+third_party/makepad-platform/src/cx.rs
+  h_65247a649a0e70 1-328
+third_party/makepad-platform/src/cx_api.rs
+  h_65247a649a0e70 1-772
+third_party/makepad-platform/src/debug.rs
+  h_65247a649a0e70 1-174
+third_party/makepad-platform/src/display_context.rs
+  h_65247a649a0e70 1-17
+third_party/makepad-platform/src/draw_list.rs
+  h_65247a649a0e70 1-497
+third_party/makepad-platform/src/draw_matrix.rs
+  h_65247a649a0e70 1-111
+third_party/makepad-platform/src/draw_shader.rs
+  h_65247a649a0e70 1-451
+third_party/makepad-platform/src/draw_vars.rs
+  h_65247a649a0e70 1-717
+third_party/makepad-platform/src/event/designer.rs
+  h_65247a649a0e70 1-34
+third_party/makepad-platform/src/event/drag_drop.rs
+  h_65247a649a0e70 1-178
+third_party/makepad-platform/src/event/event.rs
+  h_65247a649a0e70 1-605
+third_party/makepad-platform/src/event/finger.rs
+  h_65247a649a0e70 1-1359
+third_party/makepad-platform/src/event/keyboard.rs
+  h_65247a649a0e70 1-339
+third_party/makepad-platform/src/event/mod.rs
+  h_65247a649a0e70 1-19
+third_party/makepad-platform/src/event/network.rs
+  h_65247a649a0e70 1-262
+third_party/makepad-platform/src/event/video_playback.rs
+  h_65247a649a0e70 1-46
+third_party/makepad-platform/src/event/window.rs
+  h_65247a649a0e70 1-68
+third_party/makepad-platform/src/event/xr.rs
+  h_65247a649a0e70 1-396
+third_party/makepad-platform/src/file_dialogs.rs
+  h_65247a649a0e70 1-95
+third_party/makepad-platform/src/geometry.rs
+  h_65247a649a0e70 1-154
+third_party/makepad-platform/src/gpu_info.rs
+  h_65247a649a0e70 1-64
+third_party/makepad-platform/src/id_pool.rs
+  h_65247a649a0e70 1-115
+third_party/makepad-platform/src/lib.rs
+  h_65247a649a0e70 1-291
+third_party/makepad-platform/src/live_atomic.rs
+  h_65247a649a0e70 1-557
+third_party/makepad-platform/src/live_cx.rs
+  h_65247a649a0e70 1-519
+third_party/makepad-platform/src/live_prims.rs
+  h_65247a649a0e70 1-979
+third_party/makepad-platform/src/live_traits.rs
+  h_65247a649a0e70 1-429
+third_party/makepad-platform/src/log.rs
+  h_65247a649a0e70 1-186
+third_party/makepad-platform/src/macos_menu.rs
+  h_65247a649a0e70 1-22
+third_party/makepad-platform/src/media_api.rs
+  h_65247a649a0e70 1-35
+third_party/makepad-platform/src/midi.rs
+  h_65247a649a0e70 1-335
+third_party/makepad-platform/src/os/apple/apple_classes.rs
+  h_65247a649a0e70 1-103
+third_party/makepad-platform/src/os/apple/apple_media.rs
+  h_65247a649a0e70 1-123
+third_party/makepad-platform/src/os/apple/apple_resources.rs
+  h_65247a649a0e70 1-50
+third_party/makepad-platform/src/os/apple/apple_sys.rs
+  h_65247a649a0e70 1-1300
+third_party/makepad-platform/src/os/apple/apple_util.rs
+  h_65247a649a0e70 1-582
+third_party/makepad-platform/src/os/apple/apple_webview.rs
+  h_65247a649a0e70 1
+third_party/makepad-platform/src/os/apple/audio_unit.rs
+  h_65247a649a0e70 1-1315
+third_party/makepad-platform/src/os/apple/av_capture.rs
+  h_65247a649a0e70 1-394
+third_party/makepad-platform/src/os/apple/core_midi.rs
+  h_65247a649a0e70 1-226
+third_party/makepad-platform/src/os/apple/ios/ios.rs
+  h_65247a649a0e70 1-350
+third_party/makepad-platform/src/os/apple/ios/ios_app.rs
+  h_65247a649a0e70 1-439
+third_party/makepad-platform/src/os/apple/ios/ios_delegates.rs
+  h_65247a649a0e70 1-317
+third_party/makepad-platform/src/os/apple/ios/ios_event.rs
+  h_65247a649a0e70 1-42
+third_party/makepad-platform/src/os/apple/ios/mod.rs
+  h_65247a649a0e70 1-5
+third_party/makepad-platform/src/os/apple/macos/macos.rs
+  h_65247a649a0e70 1-652
+third_party/makepad-platform/src/os/apple/macos/macos_app.rs
+  h_65247a649a0e70 1-803
+third_party/makepad-platform/src/os/apple/macos/macos_delegates.rs
+  h_65247a649a0e70 1-847
+third_party/makepad-platform/src/os/apple/macos/macos_event.rs
+  h_65247a649a0e70 1-50
+third_party/makepad-platform/src/os/apple/macos/macos_stdin.rs
+  h_65247a649a0e70 1-452
+third_party/makepad-platform/src/os/apple/macos/macos_window.rs
+  h_65247a649a0e70 1-507
+third_party/makepad-platform/src/os/apple/macos/mod.rs
+  h_65247a649a0e70 1-9
+third_party/makepad-platform/src/os/apple/metal.rs
+  h_65247a649a0e70 1-1215
+third_party/makepad-platform/src/os/apple/metal_xpc.m
+  h_65247a649a0e70 1-23
+third_party/makepad-platform/src/os/apple/metal_xpc.rs
+  h_65247a649a0e70 1-193
+third_party/makepad-platform/src/os/apple/mod.rs
+  h_65247a649a0e70 1-36
+third_party/makepad-platform/src/os/apple/tvos/mod.rs
+  h_65247a649a0e70 1-5
+third_party/makepad-platform/src/os/apple/tvos/tvos.rs
+  h_65247a649a0e70 1-274
+third_party/makepad-platform/src/os/apple/tvos/tvos_app.rs
+  h_65247a649a0e70 1-325
+third_party/makepad-platform/src/os/apple/tvos/tvos_delegates.rs
+  h_65247a649a0e70 1-101
+third_party/makepad-platform/src/os/apple/tvos/tvos_event.rs
+  h_65247a649a0e70 1-18
+third_party/makepad-platform/src/os/apple/url_session.rs
+  h_65247a649a0e70 1-467
+third_party/makepad-platform/src/os/cx_native.rs
+  h_65247a649a0e70 1-60
+third_party/makepad-platform/src/os/cx_shared.rs
+  h_65247a649a0e70 1-228
+third_party/makepad-platform/src/os/cx_stdin.rs
+  h_65247a649a0e70 1-602
+third_party/makepad-platform/src/os/linux/alsa_audio.rs
+  h_65247a649a0e70 1-400
+third_party/makepad-platform/src/os/linux/alsa_midi.rs
+  h_65247a649a0e70 1-492
+third_party/makepad-platform/src/os/linux/alsa_sys.rs
+  h_65247a649a0e70 1-534
+third_party/makepad-platform/src/os/linux/android/aaudio_sys.rs
+  h_65247a649a0e70 1-171
+third_party/makepad-platform/src/os/linux/android/acamera_sys.rs
+  h_65247a649a0e70 1-397
+third_party/makepad-platform/src/os/linux/android/amidi_sys.rs
+  h_65247a649a0e70 1-62
+third_party/makepad-platform/src/os/linux/android/android.rs
+  h_65247a649a0e70 1-1123
+third_party/makepad-platform/src/os/linux/android/android_audio.rs
+  h_65247a649a0e70 1-493
+third_party/makepad-platform/src/os/linux/android/android_camera.rs
+  h_65247a649a0e70 1-332
+third_party/makepad-platform/src/os/linux/android/android_jni.rs
+  h_65247a649a0e70 1-997
+third_party/makepad-platform/src/os/linux/android/android_keycodes.rs
+  h_65247a649a0e70 1-427
+third_party/makepad-platform/src/os/linux/android/android_media.rs
+  h_65247a649a0e70 1-141
+third_party/makepad-platform/src/os/linux/android/android_midi.rs
+  h_65247a649a0e70 1-362
+third_party/makepad-platform/src/os/linux/android/android_web_socket.rs
+  h_65247a649a0e70 1-59
+third_party/makepad-platform/src/os/linux/android/mod.rs
+  h_65247a649a0e70 1-13
+third_party/makepad-platform/src/os/linux/android/ndk_sys.rs
+  h_65247a649a0e70 1-159
+third_party/makepad-platform/src/os/linux/android/ndk_utils.rs
+  h_65247a649a0e70 1-113
+third_party/makepad-platform/src/os/linux/direct/direct_event.rs
+  h_65247a649a0e70 1-26
+third_party/makepad-platform/src/os/linux/direct/drm_sys.rs
+  h_65247a649a0e70 1-280
+third_party/makepad-platform/src/os/linux/direct/egl_drm.rs
+  h_65247a649a0e70 1-407
+third_party/makepad-platform/src/os/linux/direct/gbm_sys.rs
+  h_65247a649a0e70 1-62
+third_party/makepad-platform/src/os/linux/direct/linux_direct.rs
+  h_65247a649a0e70 1-361
+third_party/makepad-platform/src/os/linux/direct/mod.rs
+  h_65247a649a0e70 1-6
+third_party/makepad-platform/src/os/linux/direct/raw_input.rs
+  h_65247a649a0e70 1-996
+third_party/makepad-platform/src/os/linux/dma_buf.rs
+  h_65247a649a0e70 1-100
+third_party/makepad-platform/src/os/linux/egl_sys.rs
+  h_65247a649a0e70 1-658
+third_party/makepad-platform/src/os/linux/gl_sys.rs
+  h_65247a649a0e70 1-415
+third_party/makepad-platform/src/os/linux/ipc.rs
+  h_65247a649a0e70 1-468
+third_party/makepad-platform/src/os/linux/libc_sys.rs
+  h_65247a649a0e70 1-82
+third_party/makepad-platform/src/os/linux/linux_media.rs
+  h_65247a649a0e70 1-122
+third_party/makepad-platform/src/os/linux/mod.rs
+  h_65247a649a0e70 1-81
+third_party/makepad-platform/src/os/linux/module_loader.rs
+  h_65247a649a0e70 1-41
+third_party/makepad-platform/src/os/linux/open_harmony/arkts_obj_ref.rs
+  h_65247a649a0e70 1-196
+third_party/makepad-platform/src/os/linux/open_harmony/mod.rs
+  h_65247a649a0e70 1-7
+third_party/makepad-platform/src/os/linux/open_harmony/oh_callbacks.rs
+  h_65247a649a0e70 1-275
+third_party/makepad-platform/src/os/linux/open_harmony/oh_media.rs
+  h_65247a649a0e70 1-87
+third_party/makepad-platform/src/os/linux/open_harmony/oh_sys.rs
+  h_65247a649a0e70 1-96
+third_party/makepad-platform/src/os/linux/open_harmony/oh_util.rs
+  h_65247a649a0e70 1-215
+third_party/makepad-platform/src/os/linux/open_harmony/open_harmony.rs
+  h_65247a649a0e70 1-679
+third_party/makepad-platform/src/os/linux/open_harmony/raw_file.rs
+  h_65247a649a0e70 1-68
+third_party/makepad-platform/src/os/linux/opengl.rs
+  h_65247a649a0e70 1-1614
+third_party/makepad-platform/src/os/linux/openxr.rs
+  h_65247a649a0e70 1-1095
+third_party/makepad-platform/src/os/linux/openxr_anchor.rs
+  h_65247a649a0e70 1-728
+third_party/makepad-platform/src/os/linux/openxr_input.rs
+  h_65247a649a0e70 1-461
+third_party/makepad-platform/src/os/linux/openxr_sys.rs
+  h_65247a649a0e70 1-4731
+third_party/makepad-platform/src/os/linux/pulse_audio.rs
+  h_65247a649a0e70 1-627
+third_party/makepad-platform/src/os/linux/pulse_sys.rs
+  h_65247a649a0e70 1-577
+third_party/makepad-platform/src/os/linux/select_timer.rs
+  h_65247a649a0e70 1-158
+third_party/makepad-platform/src/os/linux/web_socket.rs
+  h_65247a649a0e70 1-146
+third_party/makepad-platform/src/os/linux/x11/glx_sys.rs
+  h_65247a649a0e70 1-29
+third_party/makepad-platform/src/os/linux/x11/linux_x11.rs
+  h_65247a649a0e70 1-396
+third_party/makepad-platform/src/os/linux/x11/linux_x11_stdin.rs
+  h_65247a649a0e70 1-301
+third_party/makepad-platform/src/os/linux/x11/mod.rs
+  h_65247a649a0e70 1-8
+third_party/makepad-platform/src/os/linux/x11/opengl_x11.rs
+  h_65247a649a0e70 1-507
+third_party/makepad-platform/src/os/linux/x11/x11_sys.rs
+  h_65247a649a0e70 1-1125
+third_party/makepad-platform/src/os/linux/x11/xlib_app.rs
+  h_65247a649a0e70 1-963
+third_party/makepad-platform/src/os/linux/x11/xlib_event.rs
+  h_65247a649a0e70 1-46
+third_party/makepad-platform/src/os/linux/x11/xlib_window.rs
+  h_65247a649a0e70 1-818
+third_party/makepad-platform/src/os/mod.rs
+  h_65247a649a0e70 1-58
+third_party/makepad-platform/src/os/web/audio_worklet.js
+  h_65247a649a0e70 1-91
+third_party/makepad-platform/src/os/web/auto_reload.js
+  h_65247a649a0e70 1-35
+third_party/makepad-platform/src/os/web/from_wasm.rs
+  h_65247a649a0e70 1-330
+third_party/makepad-platform/src/os/web/full_canvas.css
+  h_65247a649a0e70 1-39
+third_party/makepad-platform/src/os/web/mod.rs
+  h_65247a649a0e70 1-13
+third_party/makepad-platform/src/os/web/to_wasm.rs
+  h_65247a649a0e70 1-614
+third_party/makepad-platform/src/os/web/web.js
+  h_65247a649a0e70 1-1311
+third_party/makepad-platform/src/os/web/web.rs
+  h_65247a649a0e70 1-749
+third_party/makepad-platform/src/os/web/web_audio.rs
+  h_65247a649a0e70 1-148
+third_party/makepad-platform/src/os/web/web_gl.js
+  h_65247a649a0e70 1-740
+third_party/makepad-platform/src/os/web/web_gl.rs
+  h_65247a649a0e70 1-475
+third_party/makepad-platform/src/os/web/web_media.rs
+  h_65247a649a0e70 1-108
+third_party/makepad-platform/src/os/web/web_midi.rs
+  h_65247a649a0e70 1-164
+third_party/makepad-platform/src/os/web/web_socket.rs
+  h_65247a649a0e70 1-117
+third_party/makepad-platform/src/os/web/web_worker.js
+  h_65247a649a0e70 1-155
+third_party/makepad-platform/src/os/windows/d3d11.rs
+  h_65247a649a0e70 1-1281
+third_party/makepad-platform/src/os/windows/dataobject.rs
+  h_65247a649a0e70 1-388
+third_party/makepad-platform/src/os/windows/dropfiles.rs
+  h_65247a649a0e70 1-175
+third_party/makepad-platform/src/os/windows/dropsource.rs
+  h_65247a649a0e70 1-63
+third_party/makepad-platform/src/os/windows/droptarget.rs
+  h_65247a649a0e70 1-226
+third_party/makepad-platform/src/os/windows/enumformatetc.rs
+  h_65247a649a0e70 1-246
+third_party/makepad-platform/src/os/windows/http.rs
+  h_65247a649a0e70 1-158
+third_party/makepad-platform/src/os/windows/implement_com.rs
+  h_65247a649a0e70 1-128
+third_party/makepad-platform/src/os/windows/media_foundation.rs
+  h_65247a649a0e70 1-402
+third_party/makepad-platform/src/os/windows/mod.rs
+  h_65247a649a0e70 1-28
+third_party/makepad-platform/src/os/windows/wasapi.rs
+  h_65247a649a0e70 1-555
+third_party/makepad-platform/src/os/windows/web_socket.rs
+  h_65247a649a0e70 1-146
+third_party/makepad-platform/src/os/windows/win32_app.rs
+  h_65247a649a0e70 1-712
+third_party/makepad-platform/src/os/windows/win32_event.rs
+  h_65247a649a0e70 1-52
+third_party/makepad-platform/src/os/windows/win32_midi.rs
+  h_65247a649a0e70 1-315
+third_party/makepad-platform/src/os/windows/win32_window.rs
+  h_65247a649a0e70 1-1218
+third_party/makepad-platform/src/os/windows/windows.rs
+  h_65247a649a0e70 1-454
+third_party/makepad-platform/src/os/windows/windows_media.rs
+  h_65247a649a0e70 1-127
+third_party/makepad-platform/src/os/windows/windows_stdin.rs
+  h_65247a649a0e70 1-339
+third_party/makepad-platform/src/os/windows/winrt_midi.rs
+  h_65247a649a0e70 1-331
+third_party/makepad-platform/src/pass.rs
+  h_65247a649a0e70 1-369
+third_party/makepad-platform/src/performance_stats.rs
+  h_65247a649a0e70 1-53
+third_party/makepad-platform/src/scope.rs
+  h_65247a649a0e70 1-160
+third_party/makepad-platform/src/studio.rs
+  h_65247a649a0e70 1-158
+third_party/makepad-platform/src/texture.rs
+  h_65247a649a0e70 1-640
+third_party/makepad-platform/src/thread.rs
+  h_65247a649a0e70 1-338
+third_party/makepad-platform/src/ui_runner.rs
+  h_65247a649a0e70 1-130
+third_party/makepad-platform/src/video.rs
+  h_65247a649a0e70 1-337
+third_party/makepad-platform/src/web_socket.rs
+  h_65247a649a0e70 1-302
+third_party/makepad-platform/src/window.rs
+  h_65247a649a0e70 1-301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "eac7be16ca18f807d3e23a136758b49cd2be78f7",
+  "prompts": {},
+  "humans": {
+    "h_65247a649a0e70": {
+      "author": "Fuxx-1"
+    }
+  }
+}
