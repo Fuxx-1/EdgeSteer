@@ -1,0 +1,14 @@
+third_party/makepad-platform/src/os/cx_native.rs
+  h_65247a649a0e70 27-38,41-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "b73f3fcd43e043fa34755d19b875626155217b58",
+  "prompts": {},
+  "humans": {
+    "h_65247a649a0e70": {
+      "author": "Fuxx-1"
+    }
+  }
+}
