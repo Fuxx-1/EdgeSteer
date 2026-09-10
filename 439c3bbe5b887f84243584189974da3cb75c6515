@@ -1,0 +1,16 @@
+.github/workflows/ci.yml
+  h_65247a649a0e70 120
+.github/workflows/release.yml
+  h_65247a649a0e70 119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "439c3bbe5b887f84243584189974da3cb75c6515",
+  "prompts": {},
+  "humans": {
+    "h_65247a649a0e70": {
+      "author": "Fuxx-1"
+    }
+  }
+}
