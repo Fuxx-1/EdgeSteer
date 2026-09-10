@@ -1,0 +1,21 @@
+third_party/makepad-widgets/src/drop_down.rs
+  s_d07f5ae815a216::t_ee33a1fcd3d859 184-205,946,962
+third_party/makepad-widgets/src/popup_menu.rs
+  s_d07f5ae815a216::t_ee33a1fcd3d859 25-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "44600204f2d5f7e4939dd75868621b3f762fc8b1",
+  "prompts": {},
+  "sessions": {
+    "s_d07f5ae815a216": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fe94d-165d-7400-b09f-a3bc3ce95456",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Fuxx-1"
+    }
+  }
+}
