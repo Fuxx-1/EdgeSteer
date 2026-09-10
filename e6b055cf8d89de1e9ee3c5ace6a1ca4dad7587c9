@@ -1,0 +1,34 @@
+Cargo.lock
+  h_65247a649a0e70 676
+Cargo.toml
+  h_65247a649a0e70 3
+README.md
+  h_65247a649a0e70 70
+docs/en/README.md
+  h_65247a649a0e70 73
+docs/en/operations.md
+  h_65247a649a0e70 40
+docs/zh/operations.md
+  h_65247a649a0e70 40
+src/makepad_ui.rs
+  h_65247a649a0e70 34,46-174
+third_party/makepad-platform/src/os/apple/apple_resources.rs
+  h_65247a649a0e70 32-42
+third_party/makepad-platform/src/os/cx_native.rs
+  h_65247a649a0e70 5,30-33,60-139
+third_party/makepad-widgets/src/theme_desktop_dark.rs
+  h_65247a649a0e70 348,356,364,372,379
+third_party/makepad-widgets/src/theme_desktop_light.rs
+  h_65247a649a0e70 339,347,355,363,370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "e6b055cf8d89de1e9ee3c5ace6a1ca4dad7587c9",
+  "prompts": {},
+  "humans": {
+    "h_65247a649a0e70": {
+      "author": "Fuxx-1"
+    }
+  }
+}
