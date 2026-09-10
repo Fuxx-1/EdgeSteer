@@ -1,0 +1,28 @@
+.github/workflows/release.yml
+  h_65247a649a0e70 130-131,152-153
+Cargo.lock
+  h_65247a649a0e70 159-171,689,899-904,3465-3477,3574,3577,3581,3583-3584
+Cargo.toml
+  h_65247a649a0e70 3,33
+packaging/macos/build-dmg.sh
+  h_65247a649a0e70 40-52
+src/makepad_ui.rs
+  h_65247a649a0e70 51,57-69,95,149,151-163,168-170,319
+third_party/makepad-platform/src/os/cx_native.rs
+  h_65247a649a0e70 28-35,38-40,71-75,77-80,88-93,95-100,114-153,172-174,176,181,188-190
+third_party/makepad-widgets/src/theme_desktop_dark.rs
+  h_65247a649a0e70 349,357,365
+third_party/makepad-widgets/src/theme_desktop_light.rs
+  h_65247a649a0e70 340,348,356
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "27687475ce3a3e6fadd7f815cc5d2d89c1917dd3",
+  "prompts": {},
+  "humans": {
+    "h_65247a649a0e70": {
+      "author": "Fuxx-1"
+    }
+  }
+}
