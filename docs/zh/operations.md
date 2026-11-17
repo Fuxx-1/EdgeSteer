@@ -14,7 +14,7 @@
 git clone https://github.com/Fuxx-1/EdgeSteer.git
 cd EdgeSteer
 cp config.example.json "$HOME/edgesteer.json"
-cargo build --locked --release
+./scripts/build-release.sh
 ./target/release/edgesteer --check-config
 ```
 
@@ -22,22 +22,47 @@ Windows PowerShell：
 
 ```powershell
 Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
-cargo build --locked --release
+.\scripts\build-release.ps1
 .\target\release\edgesteer.exe --check-config
 ```
 
-### Iced 原生界面
+### Flutter 界面与菜单栏 Agent
 
-macOS 请下载 Release 中对应架构的 `EdgeSteer-*-apple-darwin.dmg`，将 `EdgeSteer.app` 拖到“应用程序”后打开。磁盘镜像把界面与 DNS 引擎放在同一个 App bundle 内；监听 53 端口时会按需启动同 bundle 的隐藏授权 helper，不会安装 `edgesteer` 命令行守护进程。若检测到旧版 root 服务，可在设置页点击“移除旧版命令行服务”并授权清理。
+macOS 请下载 Release 中对应架构的 `EdgeSteer-*-apple-darwin.dmg`，将 `EdgeSteer.app` 拖到“应用程序”后打开。磁盘镜像把界面与 DNS 引擎放在同一个 App bundle 内；监听 53 端口时会按需启动同 bundle 的隐藏授权 helper，不会安装 `edgesteer` 命令行守护进程。若检测到旧版 root 服务，可在状态页点击“移除”并授权清理。
 
-`edgesteer-ui` 使用 [Iced](https://github.com/iced-rs/iced) 构建，但它只是可释放的配置窗口。轻量 EdgeSteer Agent 持有菜单栏、DNS 引擎、系统 DNS 与登录启动；窗口通过受限的本机控制通道向 Agent 发出命令。它编辑 Agent 运行时读取的同一份 JSON：保存前调用相同的严格校验，并以原子替换写入，避免 watcher 读取半份配置。
+界面有五个平级入口：状态、解析、规则集、优选、JSON。状态页同时承载运行状态条与机器级设置（偏好、登录启动、系统 DNS、网络服务、退出）。界面风格支持跟随系统、深色、浅色，默认跟随系统，系统切换外观时窗口即时跟随。界面使用 [Flutter](https://flutter.dev) 构建，是可释放的配置窗口。轻量 EdgeSteer Agent 持有菜单栏、DNS 引擎、系统 DNS 与登录启动；窗口通过受限的本机控制通道向 Agent 发出命令，自身既不持有 DNS runtime，也不直接读写配置文件：读取、校验和保存都由 Agent 完成，保存前调用与 DNS 服务相同的严格校验，并以原子替换写入，避免 watcher 读取半份配置。保存成功后 Agent 会热重载引擎；若监听地址改变，引擎会重启到新地址。
 
 ```sh
-cargo build --locked --release --features gui
-./target/release/edgesteer-ui
+# 界面（需要 Flutter 3.35 或更新版本）
+(cd ui && flutter build macos --release)
+
+# Rust 侧：Agent、特权 helper 与命令行
+./scripts/build-release.sh --features gui
+
+# 组合成一个 App bundle（含嵌套的界面 bundle）
+RUST_BIN_DIR=target/release \
+  ./packaging/macos/build-dmg.sh aarch64-apple-darwin 1.1.0 dist/EdgeSteer.dmg
 ```
 
-服务与界面都固定使用 `~/edgesteer.json`（Windows 使用 `%USERPROFILE%\edgesteer.json`），不会从工作目录读取另一份配置。界面覆盖 listener、layer 的 `next` / `fallback`、SRS 规则集、Cloudflare 优选插件和 optimizer。默认是中文暗色界面；语言和黑/白主题位于设置页的下拉框。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口显示 Agent 管理的 listener 与物理网络服务状态。macOS App 以菜单栏代理方式运行，不显示 Dock 图标；关闭窗口会结束 Iced 图形进程并释放 GPU/Metal 资源，可从菜单栏重新打开。macOS 上，只有点击启用系统 DNS 后才会请求管理员授权；Linux、Windows 可以构建和使用界面配置 DNS 服务，但系统 DNS 仍由对应网络管理器负责。Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
+未打包成 App bundle 时，直接运行 `./target/release/edgesteer-agent` 会启动菜单栏 Agent，并按同目录的 `EdgeSteer.app`（Flutter 界面）打开窗口；`--no-ui` 只启动 Agent。
+
+服务与界面都固定使用 `~/edgesteer.json`（Windows 使用 `%USERPROFILE%\edgesteer.json`），不会从工作目录读取另一份配置。界面覆盖 listener、layer 的 `next` / `fallback`、SRS 规则集、Cloudflare 优选插件和 optimizer。默认是中文、跟随系统外观；语言与风格在状态页的“偏好”中设置，风格选择同时影响菜单栏。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口显示 Agent 管理的 listener 与物理网络服务状态。macOS App 以菜单栏代理方式运行，不显示 Dock 图标；关闭窗口会结束界面进程并释放界面资源，可从菜单栏重新打开。macOS 上，只有点击启用系统 DNS 后才会请求管理员授权。
+
+Flutter 界面当前只实现 macOS（`ui/macos/`）。Linux 与 Windows 的发布归档只包含命令行与 Agent，不含图形界面；这两个平台的系统 DNS 由各自网络管理器负责。Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
+
+### 用脚本或 Agent 驱动界面
+
+界面只是视图，所有能力都在常驻 Agent 上，因此脚本和 AI Agent 不需要模拟点击或截图：
+
+```sh
+./scripts/edgesteer-ctl.sh status              # 引擎、监听器、系统 DNS、界面状态（JSON）
+./scripts/edgesteer-ctl.sh ui preferred        # 在指定视图打开界面
+                                               # status|resolvers|ruleSets|preferred|json|system
+./scripts/edgesteer-ctl.sh engine start        # start|stop|restart
+./scripts/edgesteer-ctl.sh config save new.json  # 校验并原子写入，随后热重载
+```
+
+`status` 的 `ui` 字段描述窗口当前状态（页面、语言、风格、配置文件路径与校验结果），因此脚本无需读取像素即可确认界面行为。
 
 ### 先用高端口验证
 
@@ -70,7 +95,7 @@ Resolve-DnsName www.cloudflare.com -Server 127.0.0.1 -Type A
 
 macOS 的 DHCP 网络可以直接配合 `type: "local"` 使用：物理服务 DNS 被改为本机 listener 后，EdgeSteer 会读取该服务当前 DHCP Option 6 的 DNS。它不保存旧 DNS 地址；网络切换或 DHCP 续租后，下一个刷新周期会采用当前下发的地址。
 
-解除时不要把 DHCP DNS 地址写回为静态值。使用 `EdgeSteer.app` 时，在设置页确认 listener 就绪后再启用系统 DNS。EdgeSteer 只记录自己接管的服务名，不保存历史 DNS 地址；默认关闭窗口会退出 Iced 配置进程，Agent 与 DNS 引擎继续运行。需要停止时，从菜单栏明确选择“退出 EdgeSteer”，Agent 会先把这些服务恢复为自动 DNS，再停止解析器并关闭设置窗口。恢复失败时 App 会保持运行，不会留下指向回环地址的失效 DNS。无快照模式无法无损恢复用户原先手工填写的 DNS，因此 App 会拒绝覆盖此类服务。
+解除时不要把 DHCP DNS 地址写回为静态值。使用 `EdgeSteer.app` 时，在状态页确认 listener 就绪后再启用系统 DNS。EdgeSteer 只记录自己接管的服务名，不保存历史 DNS 地址；默认关闭窗口会退出界面进程，Agent 与 DNS 引擎继续运行。需要停止时，从菜单栏明确选择“退出 EdgeSteer”，Agent 会先把这些服务恢复为自动 DNS，再停止解析器并关闭界面窗口。恢复失败时 App 会保持运行，不会留下指向回环地址的失效 DNS。无快照模式无法无损恢复用户原先手工填写的 DNS，因此 App 会拒绝覆盖此类服务。
 
 `127.0.0.1:53535` 只适合测试或由 sing-box 等前端显式指定；操作系统 DNS 地址没有端口字段，直接接管时 EdgeSteer 必须监听 `127.0.0.1:53`。Linux 和 Windows 仍需要由各自的网络管理器保留或暴露真实下层 DNS。
 

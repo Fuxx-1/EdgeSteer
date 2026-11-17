@@ -1,6 +1,6 @@
 [package]
 name = "edgesteer"
-version = "1.0.3"
+version = "1.1.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Adaptive DNS steering for preferred Cloudflare edge IPs"
@@ -13,11 +13,19 @@ categories = ["command-line-utilities", "network-programming"]
 
 [features]
 default = []
-gui = ["dep:iced", "dep:iced_aw", "dep:png", "dep:tray-icon", "dep:winit"]
+# The menu-bar agent and the privileged DNS engine helper. The user interface
+# is a separate Flutter application under `ui/` that talks to the agent over
+# its authenticated loopback control protocol.
+gui = ["dep:png", "dep:tray-icon", "dep:winit"]
 
 [[bin]]
-name = "edgesteer-ui"
-path = "src/bin/edgesteer-ui.rs"
+name = "edgesteer-agent"
+path = "src/bin/edgesteer-agent.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "edgesteer-engine"
+path = "src/bin/edgesteer-engine.rs"
 required-features = ["gui"]
 
 [dependencies]
@@ -30,7 +38,7 @@ ipnet = "2.11"
 notify = "8.0"
 rand = "0.9"
 regex = "1.11"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
 rustls = "0.23"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -39,8 +47,6 @@ tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webpki-roots = "0.26"
-iced = { version = "0.12.1", optional = true, features = ["image", "tokio"] }
-iced_aw = { version = "0.9.3", default-features = false, features = ["floating_element", "modal"], optional = true }
 png = { version = "0.18", optional = true }
 winit = { version = "0.29.15", optional = true }
 

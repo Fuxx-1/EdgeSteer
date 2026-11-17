@@ -24,7 +24,6 @@ use objc2::MainThreadMarker;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
-use serde::{Deserialize, Serialize};
 use winit::{
     event::Event,
     event_loop::{ControlFlow, EventLoopBuilder},
@@ -35,13 +34,15 @@ use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 
 use crate::{
     config,
+    control::{
+        self, AgentCommand, AgentRecord, AgentResponse, AgentStatus, CONTROL_FILE_NAME,
+        CONTROL_PROTOCOL, ControlRequest, DnsServiceStatus, LOCK_FILE_NAME,
+        SERVER_RESPONSE_TIMEOUT, UiPage, UiPreferences,
+    },
     integration::{self, IntegrationStatus, StartupService},
     tray::{self, TrayController, TrayEvent},
 };
 
-const CONTROL_PROTOCOL: u8 = 1;
-const CONTROL_FILE_NAME: &str = "agent.json";
-const LOCK_FILE_NAME: &str = "agent.lock";
 #[cfg(target_os = "macos")]
 const ENGINE_STOP_FILE_NAME: &str = "engine.stop";
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -50,7 +51,11 @@ const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 pub struct AgentOptions {
     pub config_path: PathBuf,
     pub app_bundle: Option<PathBuf>,
-    pub app_executable: PathBuf,
+    /// The Flutter interface executable opened from the menu bar.
+    pub ui_executable: PathBuf,
+    /// The helper executable that runs the DNS engine. It is a separate binary
+    /// so the privileged helper only ever contains the DNS service.
+    pub engine_executable: PathBuf,
 }
 
 /// Configures the process as a menu-bar application before any window or
@@ -67,53 +72,6 @@ pub fn configure_menu_bar_activation_policy() {
 #[cfg(not(target_os = "macos"))]
 pub fn configure_menu_bar_activation_policy() {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentCommand {
-    Status,
-    OpenUi,
-    StartEngine,
-    StopEngine,
-    RestartEngine,
-    EnableSystemDns,
-    DisableSystemDns,
-    EnableAutoStart,
-    DisableAutoStart,
-    RemoveLegacyService,
-    Refresh,
-    Quit,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentStatus {
-    pub engine_running: bool,
-    pub listener: String,
-    pub listener_ready: bool,
-    pub system_dns_enabled: bool,
-    pub autostart_enabled: bool,
-    pub configuration_error: Option<String>,
-}
-
-impl AgentStatus {
-    fn unavailable(message: impl Into<String>) -> Self {
-        Self {
-            engine_running: false,
-            listener: "Unavailable".to_owned(),
-            listener_ready: false,
-            system_dns_enabled: false,
-            autostart_enabled: false,
-            configuration_error: Some(message.into()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentResponse {
-    pub ok: bool,
-    pub message: String,
-    pub status: AgentStatus,
-}
-
 #[derive(Debug, Clone)]
 pub struct AgentClient {
     state_dir: PathBuf,
@@ -122,20 +80,24 @@ pub struct AgentClient {
 impl AgentClient {
     pub fn current_user() -> Self {
         Self {
-            state_dir: state_directory(),
+            state_dir: control::state_directory(),
         }
     }
 
     pub fn request(&self, command: AgentCommand) -> Result<AgentResponse, String> {
         let record = read_record(&self.state_dir)?;
         if record.protocol != CONTROL_PROTOCOL {
-            return Err("EdgeSteer Agent uses an incompatible control protocol".to_owned());
+            return Err(
+                "EdgeSteer Agent uses an incompatible control protocol; update both the application and the interface"
+                    .to_owned(),
+            );
         }
 
-        let mut stream = TcpStream::connect_timeout(&record.address, Duration::from_secs(3))
-            .map_err(|error| format!("connect to EdgeSteer Agent: {error}"))?;
+        let mut stream =
+            TcpStream::connect_timeout(&record.address, control::CLIENT_CONNECT_TIMEOUT)
+                .map_err(|error| format!("connect to EdgeSteer Agent: {error}"))?;
         stream
-            .set_read_timeout(Some(Duration::from_secs(75)))
+            .set_read_timeout(Some(control::CLIENT_READ_TIMEOUT))
             .map_err(|error| format!("configure EdgeSteer Agent response timeout: {error}"))?;
         stream
             .set_write_timeout(Some(Duration::from_secs(5)))
@@ -173,14 +135,14 @@ impl AgentClient {
 }
 
 pub fn start_or_open(options: AgentOptions, open_ui: bool) -> Result<(), String> {
-    let state_dir = state_directory();
+    let state_dir = control::state_directory();
     match AgentLock::acquire(&state_dir)? {
         LockState::Existing => {
             let response = AgentClient {
                 state_dir: state_dir.clone(),
             }
             .request(if open_ui {
-                AgentCommand::OpenUi
+                AgentCommand::OpenUi { page: None }
             } else {
                 AgentCommand::Status
             })?;
@@ -229,7 +191,7 @@ fn run_agent(
     let control_server = ControlServer::start(listener, record.token.clone(), request_sender)?;
     let mut agent = Agent::new(options, state_dir, lock, control_server)?;
     if open_ui {
-        let _ = agent.open_ui();
+        let _ = agent.open_ui(None);
     }
     agent.refresh_status();
     #[cfg(target_os = "macos")]
@@ -292,7 +254,11 @@ struct Agent {
     configuration_error: Option<String>,
     status: AgentStatus,
     last_status_refresh: Instant,
+    /// The Flutter interface process. Closing the window ends this process
+    /// only; the agent and the DNS engine keep running.
     ui_child: Option<Child>,
+    /// The page the running window was opened on, when the agent chose it.
+    ui_page: Option<UiPage>,
     exit_requested: bool,
 }
 
@@ -315,6 +281,7 @@ impl Agent {
             status: AgentStatus::unavailable("Configuration has not been checked"),
             last_status_refresh: Instant::now() - STATUS_REFRESH_INTERVAL,
             ui_child: None,
+            ui_page: None,
             exit_requested: false,
         };
 
@@ -333,7 +300,7 @@ impl Agent {
 
     fn handle_tray_event(&mut self, event: TrayEvent) -> AgentResponse {
         let command = match event {
-            TrayEvent::Open => AgentCommand::OpenUi,
+            TrayEvent::Open => AgentCommand::OpenUi { page: None },
             TrayEvent::ToggleEngine => {
                 if self.status.engine_running {
                     AgentCommand::StopEngine
@@ -361,9 +328,11 @@ impl Agent {
     }
 
     fn handle_command(&mut self, command: AgentCommand) -> AgentResponse {
+        let mut config = None;
+        let mut preferences = None;
         let result = match command {
             AgentCommand::Status => Ok("EdgeSteer Agent is running".to_owned()),
-            AgentCommand::OpenUi => self.open_ui(),
+            AgentCommand::OpenUi { page } => self.open_ui(page),
             AgentCommand::StartEngine => self.start_engine(),
             AgentCommand::StopEngine => self.stop_engine_with_dns_restore(),
             AgentCommand::RestartEngine => self.restart_engine(),
@@ -377,21 +346,52 @@ impl Agent {
                 .map_err(|error| format!("remove legacy service: {error:#}")),
             AgentCommand::Refresh => self.refresh_configuration(),
             AgentCommand::Quit => self.shutdown(),
+            AgentCommand::ReadConfig => control::read_config_snapshot(&self.options.config_path)
+                .map(|snapshot| {
+                    config = Some(snapshot);
+                    "Configuration read".to_owned()
+                }),
+            AgentCommand::ValidateConfig { contents } => control::validate_config_text(&contents)
+                .map(|()| "Configuration is valid".to_owned()),
+            AgentCommand::SaveConfig { contents } => {
+                control::save_config_text(&self.options.config_path, &contents).and_then(|()| {
+                    let snapshot = control::read_config_snapshot(&self.options.config_path)?;
+                    config = Some(snapshot);
+                    // Reload the engine as soon as a saved document validates,
+                    // so the interface never shows a saved-but-unapplied state.
+                    self.refresh_configuration()?;
+                    if self.engine.is_some() {
+                        self.restart_engine()?;
+                    }
+                    Ok("Configuration saved".to_owned())
+                })
+            }
+            AgentCommand::ReadPreferences => {
+                control::UiPreferences::load(&control::ui_preferences_path()).map(|loaded| {
+                    preferences = Some(loaded);
+                    "Preferences read".to_owned()
+                })
+            }
+            AgentCommand::SavePreferences { preferences: saved } => {
+                saved.save(&control::ui_preferences_path()).map(|()| {
+                    preferences = Some(saved);
+                    "Preferences saved".to_owned()
+                })
+            }
         };
 
         self.refresh_status();
-        match result {
-            Ok(message) => AgentResponse {
-                ok: true,
-                message,
-                status: self.status.clone(),
-            },
-            Err(error) => AgentResponse {
-                ok: false,
-                message: error,
-                status: self.status.clone(),
-            },
+        let mut response = match result {
+            Ok(message) => AgentResponse::success(message, self.status.clone()),
+            Err(error) => AgentResponse::failure(error, self.status.clone()),
+        };
+        if let Some(config) = config {
+            response = response.with_config(config);
         }
+        if let Some(preferences) = preferences {
+            response = response.with_preferences(preferences);
+        }
+        response
     }
 
     fn refresh_configuration(&mut self) -> Result<String, String> {
@@ -411,7 +411,7 @@ impl Agent {
         if self.engine.is_none() {
             self.engine = Some(EngineRuntime::start(
                 self.options.config_path.clone(),
-                &self.options.app_executable,
+                &self.options.engine_executable,
             )?);
         }
         Ok("DNS engine starting".to_owned())
@@ -438,6 +438,7 @@ impl Agent {
     }
 
     fn stop_ui(&mut self) {
+        self.ui_page = None;
         let Some(mut child) = self.ui_child.take() else {
             return;
         };
@@ -466,7 +467,10 @@ impl Agent {
             .map_err(|error| format!("enable open at login: {error:#}"))
     }
 
-    fn open_ui(&mut self) -> Result<String, String> {
+    /// Opens the Flutter interface. The interface is a separate process: it
+    /// owns the window, and the agent keeps the DNS engine alive after that
+    /// process exits.
+    fn open_ui(&mut self, page: Option<UiPage>) -> Result<String, String> {
         let ui_is_running = self
             .ui_child
             .as_mut()
@@ -475,11 +479,18 @@ impl Agent {
             return Ok("EdgeSteer window is already open".to_owned());
         }
         self.stop_ui();
-        let child = Command::new(&self.options.app_executable)
-            .arg("--ui")
+        let mut command = Command::new(&self.options.ui_executable);
+        if let Some(page) = page {
+            // The interface reads its initial page from the environment. It is
+            // the same switch `EDGESTEER_UI_PAGE` uses for verification, so an
+            // agent can open a page without any window automation.
+            command.env("EDGESTEER_UI_PAGE", page.as_str());
+        }
+        let child = command
             .spawn()
             .map_err(|error| format!("open EdgeSteer window: {error}"))?;
         self.ui_child = Some(child);
+        self.ui_page = page;
         Ok("Opening EdgeSteer".to_owned())
     }
 
@@ -500,8 +511,33 @@ impl Agent {
             self.engine.is_some(),
             self.configuration_error.clone(),
             integration_status.as_ref(),
+            self.ui_child
+                .as_mut()
+                .is_some_and(|child| matches!(child.try_wait(), Ok(None))),
+            self.options.app_bundle.is_some(),
         );
+        self.status.ui = self.ui_snapshot();
         self.last_status_refresh = Instant::now();
+    }
+
+    /// Describes the window for the agent-facing status reply. Reading the same
+    /// facts the window shows keeps a script from needing screenshots.
+    fn ui_snapshot(&self) -> Option<control::UiSnapshot> {
+        if !self.status.ui_running {
+            return None;
+        }
+        let preferences = UiPreferences::load(&control::ui_preferences_path()).unwrap_or_default();
+        let snapshot = control::read_config_snapshot(&self.options.config_path).ok()?;
+        let configuration_error = control::validate_config_text(&snapshot.contents).err();
+        Some(control::UiSnapshot {
+            running: true,
+            page: self.ui_page,
+            language: preferences.language,
+            appearance: preferences.appearance,
+            configuration_path: snapshot.path,
+            configuration_exists: snapshot.exists,
+            configuration_error,
+        })
     }
 
     fn sync_tray(&mut self) {
@@ -527,6 +563,8 @@ fn status_from(
     engine_running: bool,
     configuration_error: Option<String>,
     integration_status: Option<&IntegrationStatus>,
+    ui_running: bool,
+    autostart_supported: bool,
 ) -> AgentStatus {
     let listener_ready = integration_status.is_some_and(|status| status.listener_ready);
     let system_dns_enabled = integration_status.is_some_and(|status| {
@@ -537,6 +575,24 @@ fn status_from(
     }) || integration::system_dns_is_managed();
     let autostart_enabled = integration_status
         .is_some_and(|status| matches!(status.startup_service, StartupService::Registered { .. }));
+    let legacy_service_detected = integration_status.is_some_and(|status| {
+        matches!(status.startup_service, StartupService::LegacyDaemon { .. })
+    });
+    let dns_services = integration_status
+        .map(|status| {
+            status
+                .dns_services
+                .iter()
+                .map(|service| DnsServiceStatus {
+                    name: service.name.clone(),
+                    device: service.device.clone(),
+                    enabled: service.enabled,
+                    servers: service.servers.clone(),
+                    automatic: service.uses_automatic_dns(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     AgentStatus {
         engine_running,
         listener: listener
@@ -546,6 +602,11 @@ fn status_from(
         system_dns_enabled,
         autostart_enabled,
         configuration_error,
+        legacy_service_detected,
+        autostart_supported,
+        dns_services,
+        ui_running,
+        ui: None,
     }
 }
 
@@ -563,19 +624,10 @@ enum TrayLanguage {
 }
 
 fn tray_language(state_dir: &Path) -> TrayLanguage {
-    let path = state_dir.join("ui.json");
-    let value = fs::read(&path)
-        .ok()
-        .and_then(|contents| serde_json::from_slice::<serde_json::Value>(&contents).ok());
-    if value
-        .as_ref()
-        .and_then(|value| value.get("language"))
-        .and_then(serde_json::Value::as_str)
-        == Some("english")
-    {
-        TrayLanguage::English
-    } else {
-        TrayLanguage::Chinese
+    let preferences = UiPreferences::load(&state_dir.join("ui.json")).unwrap_or_default();
+    match preferences.language {
+        control::Language::Chinese => TrayLanguage::Chinese,
+        control::Language::English => TrayLanguage::English,
     }
 }
 
@@ -630,7 +682,7 @@ struct EngineRuntime {
 }
 
 impl EngineRuntime {
-    fn start(config_path: PathBuf, _app_executable: &Path) -> Result<Self, String> {
+    fn start(config_path: PathBuf, engine_executable: &Path) -> Result<Self, String> {
         #[cfg(target_os = "macos")]
         let config = config::load_config(&config_path).map_err(|error| {
             format!(
@@ -641,9 +693,10 @@ impl EngineRuntime {
 
         #[cfg(target_os = "macos")]
         if config.listener.address.port() == 53 {
-            return Self::start_privileged(config_path, _app_executable);
+            return Self::start_privileged(config_path, engine_executable);
         }
 
+        let _ = engine_executable;
         let (shutdown, shutdown_receiver) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("edgesteer-dns".to_owned())
@@ -676,18 +729,18 @@ impl EngineRuntime {
     }
 
     #[cfg(target_os = "macos")]
-    fn start_privileged(config_path: PathBuf, app_executable: &Path) -> Result<Self, String> {
-        let stop_file = state_directory().join(ENGINE_STOP_FILE_NAME);
-        fs::create_dir_all(state_directory())
+    fn start_privileged(config_path: PathBuf, engine_executable: &Path) -> Result<Self, String> {
+        let stop_file = control::state_directory().join(ENGINE_STOP_FILE_NAME);
+        fs::create_dir_all(control::state_directory())
             .map_err(|error| format!("create EdgeSteer control directory: {error}"))?;
         let _ = fs::remove_file(&stop_file);
 
         let (shutdown, shutdown_receiver) = mpsc::channel();
         let child_slot = Arc::new(Mutex::new(None));
         let child_slot_for_worker = Arc::clone(&child_slot);
-        let executable = app_executable
+        let executable = engine_executable
             .canonicalize()
-            .map_err(|error| format!("resolve packaged App executable: {error}"))?;
+            .map_err(|error| format!("resolve packaged engine executable: {error}"))?;
         let home = config_path
             .parent()
             .ok_or_else(|| "configuration has no parent directory".to_owned())?
@@ -698,7 +751,7 @@ impl EngineRuntime {
             .name("edgesteer-privileged-engine".to_owned())
             .spawn(move || {
                 let shell_command = format!(
-                    "export HOME={}; export RUST_LOG=info; exec {} --engine --stop-file {} --parent-pid {}",
+                    "export HOME={}; export RUST_LOG=info; exec {} --stop-file {} --parent-pid {}",
                     shell_quote(&home),
                     shell_quote(&executable),
                     shell_quote(&stop_file_for_worker),
@@ -708,14 +761,19 @@ impl EngineRuntime {
                     "do shell script \"{}\" with administrator privileges",
                     escape_applescript_string(&shell_command)
                 );
-                let child = match Command::new("/usr/bin/osascript").args(["-e", &script]).spawn() {
+                let child = match Command::new("/usr/bin/osascript")
+                    .args(["-e", &script])
+                    .spawn()
+                {
                     Ok(child) => child,
                     Err(error) => {
                         eprintln!("EdgeSteer could not request engine authorization: {error}");
                         return;
                     }
                 };
-                *child_slot_for_worker.lock().expect("engine child mutex poisoned") = Some(child);
+                *child_slot_for_worker
+                    .lock()
+                    .expect("engine child mutex poisoned") = Some(child);
                 loop {
                     match shutdown_receiver.recv_timeout(Duration::from_millis(120)) {
                         Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -801,21 +859,6 @@ fn escape_applescript_string(value: &str) -> String {
         .replace('\r', "\\r")
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct AgentRecord {
-    protocol: u8,
-    pid: u32,
-    address: SocketAddr,
-    token: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ControlRequest {
-    protocol: u8,
-    token: String,
-    command: AgentCommand,
-}
-
 struct ServerRequest {
     command: AgentCommand,
     response: mpsc::Sender<AgentResponse>,
@@ -895,32 +938,29 @@ fn handle_control_connection(
                 })
                 .is_err()
             {
-                AgentResponse {
-                    ok: false,
-                    message: "EdgeSteer Agent is shutting down".to_owned(),
-                    status: AgentStatus::unavailable("Agent is shutting down"),
-                }
+                AgentResponse::failure(
+                    "EdgeSteer Agent is shutting down",
+                    AgentStatus::unavailable("Agent is shutting down"),
+                )
             } else {
                 response_receiver
-                    .recv_timeout(Duration::from_secs(70))
-                    .unwrap_or_else(|_| AgentResponse {
-                        ok: false,
-                        message: "EdgeSteer Agent did not finish the requested operation"
-                            .to_owned(),
-                        status: AgentStatus::unavailable("Agent operation timed out"),
+                    .recv_timeout(SERVER_RESPONSE_TIMEOUT)
+                    .unwrap_or_else(|_| {
+                        AgentResponse::failure(
+                            "EdgeSteer Agent did not finish the requested operation",
+                            AgentStatus::unavailable("Agent operation timed out"),
+                        )
                     })
             }
         }
-        Ok(_) => AgentResponse {
-            ok: false,
-            message: "EdgeSteer Agent rejected an unauthenticated request".to_owned(),
-            status: AgentStatus::unavailable("Unauthenticated request"),
-        },
-        Err(error) => AgentResponse {
-            ok: false,
-            message: format!("EdgeSteer Agent rejected the request: {error}"),
-            status: AgentStatus::unavailable("Invalid request"),
-        },
+        Ok(_) => AgentResponse::failure(
+            "EdgeSteer Agent rejected an unauthenticated request",
+            AgentStatus::unavailable("Unauthenticated request"),
+        ),
+        Err(error) => AgentResponse::failure(
+            format!("EdgeSteer Agent rejected the request: {error}"),
+            AgentStatus::unavailable("Invalid request"),
+        ),
     };
     if let Ok(encoded) = serde_json::to_vec(&response) {
         let _ = stream.write_all(&encoded);
@@ -1064,39 +1104,6 @@ fn process_is_alive(pid: u32) -> bool {
     }
 }
 
-pub fn state_directory() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .or_else(|| std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()))
-        .map(PathBuf::from);
-
-    #[cfg(target_os = "macos")]
-    {
-        home.map(|path| path.join("Library/Application Support/EdgeSteer"))
-            .unwrap_or_else(|| PathBuf::from("edgesteer"))
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var_os("APPDATA")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .map(|path| path.join("EdgeSteer"))
-            .or_else(|| home.map(|path| path.join("AppData/Roaming/EdgeSteer")))
-            .unwrap_or_else(|| PathBuf::from("edgesteer"))
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .map(|path| path.join("edgesteer"))
-            .or_else(|| home.map(|path| path.join(".config/edgesteer")))
-            .unwrap_or_else(|| PathBuf::from("edgesteer"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1117,6 +1124,11 @@ mod tests {
             system_dns_enabled: false,
             autostart_enabled: false,
             configuration_error: None,
+            legacy_service_detected: false,
+            autostart_supported: true,
+            dns_services: Vec::new(),
+            ui_running: false,
+            ui: None,
         };
         assert!(tray_presentation(&status, TrayLanguage::Chinese).system_dns_action_enabled);
 

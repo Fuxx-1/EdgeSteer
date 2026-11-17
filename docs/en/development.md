@@ -17,7 +17,10 @@ EdgeSteer is a Rust 2024 project with Rust 1.85 as its MSRV. Source, configurati
 | `src/state.rs` | Runtime snapshots, DoH client cache, and concurrency control. |
 | `src/watcher.rs` | Configuration hot reload. |
 | `src/agent.rs` | Resident menu-bar Agent, DNS-engine ownership, and authenticated loopback control. |
-| `src/ui.rs`, `src/tray.rs` | Disposable Iced settings process and native menu-bar presentation. |
+| `src/control.rs` | Authenticated control protocol between the interface and the Agent. |
+| `src/bin/edgesteer-agent.rs`, `src/bin/edgesteer-engine.rs` | Resident menu-bar Agent and hidden privileged DNS helper. |
+| `src/tray.rs` | Native menu-bar presentation. |
+| `ui/` | Flutter configuration interface (`flutter analyze` / `flutter test`). |
 | `src/main.rs`, `src/lib.rs` | CLI, logging, and process lifecycle. |
 | `config.example.json` | Copyable configuration example. |
 | `.github/workflows/` | CI and tag-triggered releases. |
@@ -30,7 +33,7 @@ Run before committing:
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked --all-targets
-cargo build --locked --release
+./scripts/build-release.sh
 ```
 
 Validate only the configuration:
@@ -52,7 +55,7 @@ Tests do not depend on CI access to Cloudflare or Tencent. Network integration t
 
 ## CI
 
-`.github/workflows/ci.yml` runs rustfmt, Clippy, and tests on Linux x86_64, then tests the remaining five native Linux, macOS, and Windows targets. Linux x86_64 is not repeated in the native matrix because the quality job already covers it. Dependency caches are keyed by target and lockfile, obsolete runs for the same branch are cancelled, and a failing native target stops queued peers. Release tags still build all six installable native assets. CI uses the lockfile and Rust 1.85; reproduce those commands locally.
+`.github/workflows/ci.yml` runs rustfmt, Clippy, tests, and a first-party privacy scan on Linux x86_64, then tests the remaining five native Linux, macOS, and Windows targets. Linux x86_64 is not repeated in the native matrix because the quality job already covers it. Dependency caches are keyed by target and lockfile, obsolete runs for the same branch are cancelled, and a failing native target stops queued peers. Release tags still build all six installable native assets and scan the binaries before packaging. CI uses the lockfile and Rust 1.85; reproduce those commands locally.
 
 ## Releases
 
@@ -62,7 +65,7 @@ Tests do not depend on CI access to Cloudflare or Tencent. Network integration t
 - `v1.2.3-alpha.1`, `v1.2.3-beta.1`, and `v1.2.3-rc.1` create pre-releases.
 - Invalid semantic-version tags fail before building.
 
-The workflow builds x86_64 and ARM64 assets for Linux, macOS, and Windows. Linux and Windows publish archives containing the CLI and UI binaries. macOS publishes architecture-specific unsigned `.dmg` images containing an `EdgeSteer.app` that can be dragged to Applications; the App bundle manages the DNS engine (using a hidden elevated helper for port 53 when needed) and contains no standalone command-line service.
+The workflow builds x86_64 and ARM64 assets for Linux, macOS, and Windows. Linux and Windows publish archives containing the command line and agent binaries (no graphical interface). macOS publishes architecture-specific unsigned `.dmg` images containing an `EdgeSteer.app` that can be dragged to Applications; the App bundle manages the DNS engine (using a hidden elevated helper for port 53 when needed) and contains no standalone command-line service.
 
 Example:
 
@@ -71,7 +74,7 @@ git tag -a v0.4.0 -m "EdgeSteer v0.4.0"
 git push origin v0.4.0
 ```
 
-Before a release, ensure the worktree is clean, `cargo test --locked --all-targets` passes, the example configuration validates, and the release workflow builds on every target runner.
+Before a release, ensure the worktree is clean, `cargo test --locked --all-targets` passes, the example configuration validates, and the release workflow builds on every target runner. Use `scripts/build-release.sh` on macOS/Linux or `scripts/build-release.ps1` on Windows for a binary that might be distributed: it remaps local compiler paths before the artifact privacy check runs.
 
 ## Documentation maintenance
 

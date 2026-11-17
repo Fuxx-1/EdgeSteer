@@ -17,7 +17,10 @@ EdgeSteer 是 Rust 2024 项目，MSRV 为 Rust 1.85。文档、配置和源码�
 | `src/state.rs` | 运行时快照、DoH client 缓存与并发控制。 |
 | `src/watcher.rs` | 配置热重载。 |
 | `src/agent.rs` | 常驻菜单栏 Agent、DNS 引擎所有权和带认证的本机控制通道。 |
-| `src/ui.rs`、`src/tray.rs` | 可释放的 Iced 配置进程和原生菜单栏呈现。 |
+| `src/control.rs` | 界面与 Agent 的认证控制协议。 |
+| `src/bin/edgesteer-agent.rs`、`src/bin/edgesteer-engine.rs` | 常驻菜单栏 Agent 与隐藏的特权 DNS helper。 |
+| `src/tray.rs` | 原生菜单栏呈现。 |
+| `ui/` | Flutter 配置界面（`flutter analyze` / `flutter test`）。 |
 | `src/main.rs`, `src/lib.rs` | CLI、日志和进程生命周期。 |
 | `config.example.json` | 可直接复制修改的配置样例。 |
 | `.github/workflows/` | CI 与 tag release。 |
@@ -30,7 +33,7 @@ EdgeSteer 是 Rust 2024 项目，MSRV 为 Rust 1.85。文档、配置和源码�
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked --all-targets
-cargo build --locked --release
+./scripts/build-release.sh
 ```
 
 只校验配置：
@@ -52,7 +55,7 @@ cargo run --release -- --check-config
 
 ## CI
 
-`.github/workflows/ci.yml` 在 Linux x86_64 上执行 rustfmt、Clippy 和测试，再测试其余五个 Linux、macOS、Windows 原生目标。Linux x86_64 已由质量任务覆盖，不在原生矩阵中重复构建。依赖缓存按目标与锁文件隔离；同一分支过期的运行会取消，任一原生目标失败会停止尚未开始的同伴任务。发布 tag 仍会构建全部六个原生安装包。CI 使用锁文件和 Rust 1.85 toolchain，开发者本地应尽量复现同样命令。
+`.github/workflows/ci.yml` 在 Linux x86_64 上执行 rustfmt、Clippy、测试和第一方文件隐私扫描，再测试其余五个 Linux、macOS、Windows 原生目标。Linux x86_64 已由质量任务覆盖，不在原生矩阵中重复构建。依赖缓存按目标与锁文件隔离；同一分支过期的运行会取消，任一原生目标失败会停止尚未开始的同伴任务。发布 tag 仍会构建全部六个原生安装包，并在打包前扫描二进制。CI 使用锁文件和 Rust 1.85 toolchain，开发者本地应尽量复现同样命令。
 
 ## Release
 
@@ -62,7 +65,7 @@ cargo run --release -- --check-config
 - `v1.2.3-alpha.1`、`v1.2.3-beta.1`、`v1.2.3-rc.1` 等带连字符的版本创建 pre-release。
 - 不符合语义版本的 tag 会在构建前失败。
 
-发布流程会为 Linux、macOS、Windows 的 x86_64 与 ARM64 构建产物。Linux、Windows 发布包含 CLI 和 UI 的归档；macOS 发布按架构区分的未签名 `.dmg`，内含可拖到“应用程序”的 `EdgeSteer.app`。该 App bundle 管理内置 DNS 引擎（53 端口需要时使用隐藏授权 helper），不包含独立的命令行服务。
+发布流程会为 Linux、macOS、Windows 的 x86_64 与 ARM64 构建产物。Linux、Windows 发布包含 CLI 与 Agent 的归档（不含图形界面）；macOS 发布按架构区分的未签名 `.dmg`，内含可拖到“应用程序”的 `EdgeSteer.app`。该 App bundle 管理内置 DNS 引擎（53 端口需要时使用隐藏授权 helper），不包含独立的命令行服务。
 
 示例：
 
@@ -71,7 +74,7 @@ git tag -a v0.4.0 -m "EdgeSteer v0.4.0"
 git push origin v0.4.0
 ```
 
-发布前至少确认工作区干净、`cargo test --locked --all-targets` 通过、配置示例可用，并且 release workflow 能在目标 runner 上完成构建。
+发布前至少确认工作区干净、`cargo test --locked --all-targets` 通过、配置示例可用，并且 release workflow 能在目标 runner 上完成构建。可能被分发的二进制在 macOS/Linux 使用 `scripts/build-release.sh` 构建，在 Windows 使用 `scripts/build-release.ps1` 构建；脚本会先重映射本机编译路径，再执行产物隐私检查。
 
 ## 文档维护
 

@@ -22,7 +22,7 @@ pub const AUTOSTART_LABEL: &str = "io.edgesteer.app";
 // These labels belonged to the pre-App implementation. They are removed only
 // when a user explicitly enables login start from the packaged application.
 #[cfg(target_os = "macos")]
-const LEGACY_DAEMON_LABELS: [&str; 2] = ["io.edgesteer.dns", "io.edgesteer.legacy"];
+const LEGACY_DAEMON_LABELS: [&str; 1] = ["io.edgesteer.dns"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntegrationStatus {

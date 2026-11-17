@@ -34,8 +34,10 @@ Every layer is a resolver node. `entry` is the only start, `next` is evaluated o
 | `src/rule_sets.rs` | Native domain-rule loading for sing-box SRS v1–v5, with local/remote refresh and last-good retention. |
 | `src/state.rs` | `ArcSwap` runtime snapshots, rule sets, Cloudflare ranges, and the DoH client cache. |
 | `src/watcher.rs` | Configuration watcher with approximately 250 ms debounce and atomic replacement after validation. |
-| `src/agent.rs` | Lightweight resident Agent for the menu bar, DNS-engine lifecycle, system DNS, login integration, and loopback control channel. It does not load Iced or a GPU renderer. |
-| `src/ui.rs` | Separate Iced settings window. Closing it exits that process and releases GPU/Metal resources while the Agent and DNS engine continue in the menu bar. |
+| `src/control.rs` | Authenticated control protocol between the interface and the Agent: commands, status, configuration read/validate/save, and interface preferences. |
+| `src/agent.rs`, `src/tray.rs` | Lightweight resident Agent for the menu bar, DNS-engine lifecycle, system DNS, login integration, and loopback control channel. It loads no GUI renderer. |
+| `src/bin/edgesteer-engine.rs` | Hidden privileged DNS helper, started on demand only when listening on port 53, containing nothing but the DNS service. |
+| `ui/` | Flutter configuration interface. Closing it exits that process while the Agent and DNS engine continue in the menu bar. |
 
 ## Request lifecycle
 
@@ -70,9 +72,9 @@ Listener address and `allow_remote` changes cannot rebind sockets dynamically. T
 
 ## App lifecycle
 
-The packaged App starts the EdgeSteer Agent first. The Agent uses a native event loop and a menu-bar icon while it owns the DNS runtime; the Iced settings window runs as a separate child process only at first launch or when opened from the menu bar. Its control channel binds only `127.0.0.1` and requires the random token stored in the Agent state record, so the UI never owns the resolver directly.
+The packaged App starts the EdgeSteer Agent first. The Agent uses a native event loop and a menu-bar icon while it owns the DNS runtime; the Flutter settings window runs as a separate child process only at first launch or when opened from the menu bar. Its control channel binds only `127.0.0.1` and requires the random token stored in the Agent state record, so the UI never owns the resolver directly. The interface also never reads or writes the configuration file itself: reading, validation, and saving all go through the Agent, so the window and the DNS service share one strict validation boundary.
 
-Closing Settings normally exits the UI process instead of hiding its wgpu/Metal renderer. DNS, the menu bar, and any managed system DNS remain available while the complete GUI allocation is released. Opening Settings from the menu bar creates a fresh UI process. When the user explicitly chooses `Quit EdgeSteer`, the Agent restores the system DNS it owns first, stops the resolver, then closes any remaining settings window.
+Closing Settings normally exits the UI process instead of hiding its Flutter renderer. DNS, the menu bar, and any managed system DNS remain available while the complete GUI allocation is released. Opening Settings from the menu bar creates a fresh UI process. When the user explicitly chooses `Quit EdgeSteer`, the Agent restores the system DNS it owns first, stops the resolver, then closes any remaining settings window.
 
 ## Security boundaries
 

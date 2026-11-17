@@ -14,7 +14,7 @@ Rust 1.85 or newer is required:
 git clone https://github.com/Fuxx-1/EdgeSteer.git
 cd EdgeSteer
 cp config.example.json "$HOME/edgesteer.json"
-cargo build --locked --release
+./scripts/build-release.sh
 ./target/release/edgesteer --check-config
 ```
 
@@ -22,22 +22,46 @@ PowerShell:
 
 ```powershell
 Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
-cargo build --locked --release
+.\scripts\build-release.ps1
 .\target\release\edgesteer.exe --check-config
 ```
 
-### Iced native UI
+### Flutter interface and menu-bar Agent
 
-On macOS, open the matching `EdgeSteer-*-apple-darwin.dmg` release asset, drag `EdgeSteer.app` to Applications, and open it there. The disk image contains the UI and DNS engine together; port 53 may use a hidden elevated helper from that same bundle, but it does not install an `edgesteer` command-line daemon. If the Settings page detects a legacy root service, remove it there with administrator authorization.
+On macOS, open the matching `EdgeSteer-*-apple-darwin.dmg` release asset, drag `EdgeSteer.app` to Applications, and open it there. The disk image contains the UI and DNS engine together; port 53 may use a hidden elevated helper from that same bundle, but it does not install an `edgesteer` command-line daemon. If the status page detects a legacy root service, remove it there with administrator authorization.
 
-`edgesteer-ui` is built with [Iced](https://github.com/iced-rs/iced), but it is a disposable settings window rather than the resolver host. The lightweight EdgeSteer Agent owns the menu bar, DNS engine, system-DNS state, and login integration; the window sends commands only over an authenticated loopback control channel. It edits the exact JSON used by the Agent, applies the same strict validation before saving, and atomically replaces the file so the watcher does not observe a partial document.
+The interface has five sibling sections: Status, Resolvers, Rule sets, Preferred, and JSON. Status carries both the runtime strip and the machine-level settings (preferences, login item, system DNS, network services, quit). Appearance can follow the system, or be forced dark or light; the default follows the system, and the window follows macOS when it changes while running. It is built with [Flutter](https://flutter.dev) and is a disposable settings window rather than the resolver host. The lightweight EdgeSteer Agent owns the menu bar, DNS engine, system-DNS state, and login integration; the window sends commands only over an authenticated loopback control channel and never reads or writes the configuration file itself. Reading, validation, and saving all go through the Agent, which applies the same strict validation the DNS service uses and atomically replaces the file so the watcher does not observe a partial document. Resolver layers, SRS rule sets, Cloudflare preferred plugins, and optimizer fields have structured forms, while the Advanced JSON page remains available for bulk edits. After a successful save the Agent hot-reloads the engine, restarting it when the listener address changed.
 
 ```sh
-cargo build --locked --release --features gui
-./target/release/edgesteer-ui
+# Interface (Flutter 3.35 or newer)
+(cd ui && flutter build macos --release)
+
+# Rust side: agent, privileged helper, and the command line
+./scripts/build-release.sh --features gui
+
+# Combine everything into one App bundle with the nested interface bundle
+RUST_BIN_DIR=target/release \
+  ./packaging/macos/build-dmg.sh aarch64-apple-darwin 1.1.0 dist/EdgeSteer.dmg
 ```
 
-The service and UI both use the fixed `~/edgesteer.json` path (`%USERPROFILE%\edgesteer.json` on Windows), never another working-directory file. The UI covers the listener, resolver-layer `next` / `fallback` links, SRS rule sets, Cloudflare preferred-IP plugins, and the optimizer. It opens in Chinese dark mode; Settings provides Chinese/English and Dark/Light pick lists. The menu bar is the primary control surface, while Settings shows the Agent-managed listener, an optional per-user login item, and physical network-service state. On macOS, the packaged App runs as a menu-bar agent with no Dock entry. Closing Settings terminates the Iced process and releases its GPU/Metal resources; the menu-bar item opens a fresh Settings process when needed. Enabling system DNS requests administrator authorization only after the user selects it. Linux and Windows build and use the UI to configure the DNS service; their network managers remain responsible for system DNS registration. Linux menu-bar support requires GTK 3 and an Ayatana AppIndicator runtime.
+Outside a packaged App bundle, `./target/release/edgesteer-agent` starts the menu-bar agent and opens the window from the sibling `EdgeSteer.app` (the Flutter interface); `--no-ui` starts the agent alone.
+
+The service and UI both use the fixed `~/edgesteer.json` path (`%USERPROFILE%\edgesteer.json` on Windows), never another working-directory file. The UI covers the listener, resolver-layer `next` / `fallback` links, SRS rule sets, Cloudflare preferred-IP plugins, and the optimizer through structured forms, with an Advanced JSON page for the complete document. It opens in Chinese and follows the system appearance; language and appearance live under Preferences on the status page, and the appearance choice also drives the menu bar. The menu bar is the primary control surface, while Settings shows the Agent-managed listener, an optional per-user login item, and physical network-service state. CJK and emoji fonts prefer the operating system and use HTTPS-cached fallbacks only when missing. On macOS, the packaged App runs as a menu-bar agent with no Dock entry. Closing Settings terminates the interface process and releases its UI resources; the menu-bar item opens a fresh Settings process when needed. Enabling system DNS requests administrator authorization only after the user selects it. 
+The Flutter interface is currently implemented for macOS only (`ui/macos/`). The Linux and Windows release archives contain the command line and the agent but no graphical interface; their network managers remain responsible for system DNS registration. Linux menu-bar support requires GTK 3 and an Ayatana AppIndicator runtime.
+
+### Drive the interface from a script or an agent
+
+The window is only a view; every capability lives in the resident agent, so scripts and AI agents never need to simulate clicks or take screenshots:
+
+```sh
+./scripts/edgesteer-ctl.sh status              # engine, listener, system DNS, UI state (JSON)
+./scripts/edgesteer-ctl.sh ui preferred        # open the window on a given view
+                                               # status|resolvers|ruleSets|preferred|json|system
+./scripts/edgesteer-ctl.sh engine start        # start|stop|restart
+./scripts/edgesteer-ctl.sh config save new.json  # validate, write atomically, hot reload
+```
+
+The `ui` field of `status` describes the window (page, language, appearance, configuration path and its validation result), so a script can verify interface behaviour without reading pixels.
 
 ### Test on a high port
 
@@ -70,7 +94,7 @@ Only consider switching to port 53 after high-port queries work. The default lis
 
 On a DHCP macOS network, `type: "local"` can be used directly as system DNS: after a physical service points at the local listener, EdgeSteer reads that service's current DHCP option 6 DNS. It does not save old DNS addresses; a network change or DHCP renewal is picked up on the next refresh.
 
-Do not write DHCP DNS addresses back as static settings when disabling it. In `EdgeSteer.app`, use Settings to enable system DNS only after the listener is ready. EdgeSteer records the affected service names, not historical DNS addresses. By default, closing Settings terminates the Iced process while the Agent keeps the resolver running. Choose `Quit EdgeSteer` explicitly from the menu bar to restore only those services to automatic DNS before the Agent stops the resolver and closes any Settings process. If that restoration fails, the App remains open instead of leaving system DNS on loopback. A no-snapshot workflow cannot faithfully restore user-entered manual DNS, so the App refuses to replace it.
+Do not write DHCP DNS addresses back as static settings when disabling it. In `EdgeSteer.app`, use the status page to enable system DNS only after the listener is ready. EdgeSteer records the affected service names, not historical DNS addresses. By default, closing Settings terminates the interface process while the Agent keeps the resolver running. Choose `Quit EdgeSteer` explicitly from the menu bar to restore only those services to automatic DNS before the Agent stops the resolver and closes any Settings process. If that restoration fails, the App remains open instead of leaving system DNS on loopback. A no-snapshot workflow cannot faithfully restore user-entered manual DNS, so the App refuses to replace it.
 
 `127.0.0.1:53535` is for testing or an explicit front end such as sing-box. Ordinary operating-system DNS settings have no port field, so direct takeover requires EdgeSteer on `127.0.0.1:53`. Linux and Windows still need their network managers to retain or expose the real underlay DNS.
 

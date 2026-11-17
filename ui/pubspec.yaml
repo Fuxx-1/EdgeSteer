@@ -1,0 +1,25 @@
+name: edgesteer_ui
+description: EdgeSteer configuration interface. The DNS engine and system DNS registration stay in the resident Rust agent; closing this window keeps them running.
+publish_to: 'none'
+version: 1.1.0+9
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    # A directory declaration is what lets Flutter resolve the density variants
+    # (assets/2.0x, assets/3.0x). Declaring the file alone bundles only the 1x
+    # bitmap, which then gets downscaled from the 512px source at paint time and
+    # draws blurry on a Retina display.
+    - assets/

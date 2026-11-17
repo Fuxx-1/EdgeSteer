@@ -7,6 +7,7 @@ use tracing::info;
 #[cfg(feature = "gui")]
 pub mod agent;
 pub mod config;
+pub mod control;
 pub mod dns;
 pub mod integration;
 pub mod local_dns;
@@ -17,8 +18,6 @@ pub mod rule_sets;
 pub mod state;
 #[cfg(feature = "gui")]
 pub mod tray;
-#[cfg(feature = "gui")]
-pub mod ui;
 pub mod watcher;
 
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "edgesteer.json";
