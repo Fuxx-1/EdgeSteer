@@ -30,7 +30,7 @@ Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
 
 On macOS, open the matching `EdgeSteer-*-apple-darwin.dmg` release asset, drag `EdgeSteer.app` to Applications, and open it there. The disk image contains the UI and DNS engine together; port 53 may use a hidden elevated helper from that same bundle, but it does not install an `edgesteer` command-line daemon. If the Settings page detects a legacy root service, remove it there with administrator authorization.
 
-The interface is built with [Flutter](https://flutter.dev) and is a disposable settings window rather than the resolver host. The lightweight EdgeSteer Agent owns the menu bar, DNS engine, system-DNS state, and login integration; the window sends commands only over an authenticated loopback control channel and never reads or writes the configuration file itself. Reading, validation, and saving all go through the Agent, which applies the same strict validation the DNS service uses and atomically replaces the file so the watcher does not observe a partial document. Resolver layers, SRS rule sets, Cloudflare preferred plugins, and optimizer fields have structured forms, while the Advanced JSON page remains available for bulk edits. After a successful save the Agent hot-reloads the engine, restarting it when the listener address changed.
+The interface has three top-level sections: Status, Config, and System. Resolvers, rule sets, preferred plugins, and JSON are four views of one document, so they share the Config section instead of each taking a top-level tab. It is built with [Flutter](https://flutter.dev) and is a disposable settings window rather than the resolver host. The lightweight EdgeSteer Agent owns the menu bar, DNS engine, system-DNS state, and login integration; the window sends commands only over an authenticated loopback control channel and never reads or writes the configuration file itself. Reading, validation, and saving all go through the Agent, which applies the same strict validation the DNS service uses and atomically replaces the file so the watcher does not observe a partial document. Resolver layers, SRS rule sets, Cloudflare preferred plugins, and optimizer fields have structured forms, while the Advanced JSON page remains available for bulk edits. After a successful save the Agent hot-reloads the engine, restarting it when the listener address changed.
 
 ```sh
 # Interface (Flutter 3.35 or newer)
@@ -53,7 +53,8 @@ The window is only a view; every capability lives in the resident agent, so scri
 
 ```sh
 ./scripts/edgesteer-ctl.sh status              # engine, listener, system DNS, UI state (JSON)
-./scripts/edgesteer-ctl.sh ui preferred        # open the window on a given page
+./scripts/edgesteer-ctl.sh ui preferred        # open the window on a given view
+                                               # status|resolvers|ruleSets|preferred|json|system
 ./scripts/edgesteer-ctl.sh engine start        # start|stop|restart
 ./scripts/edgesteer-ctl.sh config save new.json  # validate, write atomically, hot reload
 ```

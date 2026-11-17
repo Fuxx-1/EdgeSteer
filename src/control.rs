@@ -249,6 +249,10 @@ impl Default for Language {
 pub enum UiPage {
     Status,
     Resolvers,
+    /// The Flutter interface names this page `ruleSets`, and the same string is
+    /// passed through `EDGESTEER_UI_PAGE`. Spelling it explicitly keeps the wire
+    /// value, the environment value, and the Dart page identifier identical.
+    #[serde(rename = "ruleSets")]
     RuleSets,
     Preferred,
     Json,
@@ -459,6 +463,27 @@ mod tests {
             UiPreferences::load(&path).expect("load preferences"),
             preferences
         );
+    }
+
+    #[test]
+    fn ui_page_wire_names_match_the_interface_page_identifiers() {
+        // The wire value, the `EDGESTEER_UI_PAGE` value, and the Flutter page
+        // identifier are one string. If they drift, `ui <page>` silently opens
+        // the wrong page, so pin them here.
+        for (page, wire) in [
+            (UiPage::Status, "status"),
+            (UiPage::Resolvers, "resolvers"),
+            (UiPage::RuleSets, "ruleSets"),
+            (UiPage::Preferred, "preferred"),
+            (UiPage::Json, "json"),
+            (UiPage::System, "system"),
+        ] {
+            let encoded = serde_json::to_string(&page).expect("encode page");
+            assert_eq!(encoded, format!("\"{wire}\""));
+            assert_eq!(page.as_str(), wire);
+            let decoded: UiPage = serde_json::from_str(&encoded).expect("decode page");
+            assert_eq!(decoded, page);
+        }
     }
 
     #[test]

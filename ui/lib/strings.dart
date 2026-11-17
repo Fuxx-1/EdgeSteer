@@ -18,11 +18,14 @@ class Strings {
   // Navigation -----------------------------------------------------------------
 
   String get navStatus => t('状态', 'Status');
-  String get navResolvers => t('解析', 'Resolvers');
-  String get navRuleSets => t('规则集', 'Rule sets');
-  String get navPreferred => t('优选', 'Preferred');
-  String get navJson => 'JSON';
+  String get navConfig => t('配置', 'Config');
   String get navSystem => t('系统', 'System');
+
+  // Sections inside the configuration document.
+  String get sectionResolvers => t('解析', 'Resolvers');
+  String get sectionRuleSets => t('规则集', 'Rule sets');
+  String get sectionPreferred => t('优选', 'Preferred');
+  String get sectionJson => 'JSON';
 
   // Shared actions -------------------------------------------------------------
 

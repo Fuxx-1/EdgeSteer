@@ -68,7 +68,9 @@ App 由三个协作进程组成，职责互不重叠：
 | `edgesteer-engine` | 隐藏的特权 DNS helper，仅在监听 53 端口时按需启动，只包含 DNS 服务。 |
 | `EdgeSteer.app`（嵌套 bundle） | [Flutter](https://flutter.dev) 配置界面。关闭窗口只会结束这个窗口进程。 |
 
-配置界面用 Flutter 重写，通过本机受限控制通道向 Agent 发出命令，自身不持有 DNS runtime，也不直接读写配置文件。保存前由 Agent 用同一套严格校验验证整份文档，通过后原子替换文件并热重载引擎。界面提供解析层、规则集、CF 优选和优化器的结构化表单，包含 `next` / `fallback`、关键词/SRS 匹配、DoH/DoT/local 上游、候选 CIDR 与兼容性主机；高级 JSON 页面用于批量修改完整文档。
+配置界面用 Flutter 重写，通过本机受限控制通道向 Agent 发出命令，自身不持有 DNS runtime，也不直接读写配置文件。保存前由 Agent 用同一套严格校验验证整份文档，通过后原子替换文件并热重载引擎。
+
+界面只有三个顶层入口：**状态**（只读，引擎、监听器、系统 DNS 与解析链）、**配置**（解析层、规则集、优选、JSON 四个视图，编辑同一份文档）、**系统**（偏好、登录启动、系统 DNS、退出）。解析层表单包含 `next` / `fallback`、关键词/SRS 匹配、DoH/DoT/local 上游；优选页包含候选 CIDR 与兼容性主机；JSON 视图用于批量修改完整文档。
 
 ```sh
 # 界面依赖 Flutter 3.35 或更新版本

@@ -104,7 +104,7 @@ class OverviewPage extends StatelessWidget {
             child: EdgeGroup(
               header: strings.chain,
               trailing: QuietAction(
-                label: strings.navResolvers,
+                label: strings.sectionResolvers,
                 onPressed: onOpenResolvers,
               ),
               scrollable: true,
