@@ -1,0 +1,26 @@
+src/control.rs
+  h_e59efd41e8686d 251-252,269,478
+ui/lib/main.dart
+  h_e59efd41e8686d 22,109-110,261,264-267
+ui/lib/theme.dart
+  h_e59efd41e8686d 87,89-90
+ui/lib/window_controls.dart
+  h_e59efd41e8686d 1-136
+ui/macos/Runner/MainFlutterWindow.swift
+  h_e59efd41e8686d 15-29,35-59
+ui/test/navigation_test.dart
+  h_e59efd41e8686d 97-115
+ui/test/window_controls_test.dart
+  h_e59efd41e8686d 1-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "251f134f52c6e6d30fd76229b342b6d6e2157e27",
+  "prompts": {},
+  "humans": {
+    "h_e59efd41e8686d": {
+      "author": "Fuxx-1 <583742849@qq.com>"
+    }
+  }
+}
