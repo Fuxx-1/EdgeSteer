@@ -7,11 +7,10 @@ use tracing::info;
 #[cfg(feature = "gui")]
 pub mod agent;
 pub mod config;
+pub mod control;
 pub mod dns;
 pub mod integration;
 pub mod local_dns;
-#[cfg(feature = "gui")]
-pub mod makepad_ui;
 pub mod optimizer;
 pub mod plugins;
 pub mod ranges;

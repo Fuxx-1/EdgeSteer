@@ -44,6 +44,23 @@ jobs:
       - run: cargo clippy --locked --all-targets --features gui -- -D warnings
       - run: cargo test --locked --all-targets --features gui
 
+  interface:
+    name: Interface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.35.4
+          cache: true
+      - name: Analyze the Flutter interface
+        working-directory: ui
+        run: flutter analyze
+      - name: Test the Flutter interface
+        working-directory: ui
+        run: flutter test
+
   native:
     name: Native (${{ matrix.platform }} ${{ matrix.arch }})
     strategy:

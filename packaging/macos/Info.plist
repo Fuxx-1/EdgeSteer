@@ -7,7 +7,7 @@
   <key>CFBundleDisplayName</key>
   <string>EdgeSteer</string>
   <key>CFBundleExecutable</key>
-  <string>edgesteer-ui</string>
+  <string>edgesteer-agent</string>
   <key>CFBundleIdentifier</key>
   <string>io.edgesteer.app</string>
   <key>CFBundleInfoDictionaryVersion</key>

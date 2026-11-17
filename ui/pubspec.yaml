@@ -1,0 +1,22 @@
+name: edgesteer_ui
+description: EdgeSteer configuration interface. The DNS engine and system DNS registration stay in the resident Rust agent; closing this window keeps them running.
+publish_to: 'none'
+version: 1.0.4+8
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/config.example.json
+    - assets/edgesteer-logo.png

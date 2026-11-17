@@ -17,7 +17,10 @@ EdgeSteer 是 Rust 2024 项目，MSRV 为 Rust 1.85。文档、配置和源码�
 | `src/state.rs` | 运行时快照、DoH client 缓存与并发控制。 |
 | `src/watcher.rs` | 配置热重载。 |
 | `src/agent.rs` | 常驻菜单栏 Agent、DNS 引擎所有权和带认证的本机控制通道。 |
-| `src/makepad_ui.rs`、`src/tray.rs` | 可释放的 Makepad 配置进程和原生菜单栏呈现。 |
+| `src/control.rs` | 界面与 Agent 的认证控制协议。 |
+| `src/bin/edgesteer-agent.rs`、`src/bin/edgesteer-engine.rs` | 常驻菜单栏 Agent 与隐藏的特权 DNS helper。 |
+| `src/tray.rs` | 原生菜单栏呈现。 |
+| `ui/` | Flutter 配置界面（`flutter analyze` / `flutter test`）。 |
 | `src/main.rs`, `src/lib.rs` | CLI、日志和进程生命周期。 |
 | `config.example.json` | 可直接复制修改的配置样例。 |
 | `.github/workflows/` | CI 与 tag release。 |

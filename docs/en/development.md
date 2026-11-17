@@ -17,7 +17,10 @@ EdgeSteer is a Rust 2024 project with Rust 1.85 as its MSRV. Source, configurati
 | `src/state.rs` | Runtime snapshots, DoH client cache, and concurrency control. |
 | `src/watcher.rs` | Configuration hot reload. |
 | `src/agent.rs` | Resident menu-bar Agent, DNS-engine ownership, and authenticated loopback control. |
-| `src/makepad_ui.rs`, `src/tray.rs` | Disposable Makepad settings process and native menu-bar presentation. |
+| `src/control.rs` | Authenticated control protocol between the interface and the Agent. |
+| `src/bin/edgesteer-agent.rs`, `src/bin/edgesteer-engine.rs` | Resident menu-bar Agent and hidden privileged DNS helper. |
+| `src/tray.rs` | Native menu-bar presentation. |
+| `ui/` | Flutter configuration interface (`flutter analyze` / `flutter test`). |
 | `src/main.rs`, `src/lib.rs` | CLI, logging, and process lifecycle. |
 | `config.example.json` | Copyable configuration example. |
 | `.github/workflows/` | CI and tag-triggered releases. |

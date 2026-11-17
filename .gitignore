@@ -7,3 +7,9 @@
 /.idea/
 /.vscode/
 /edgesteer.json
+
+# Flutter interface build output
+/ui/build/
+/ui/.dart_tool/
+/ui/.flutter-plugins-dependencies
+/ui/macos/Flutter/ephemeral/
