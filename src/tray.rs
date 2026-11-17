@@ -11,7 +11,9 @@ const SYSTEM_DNS_ID: &str = "edgesteer-system-dns";
 const AUTOSTART_ID: &str = "edgesteer-autostart";
 const QUIT_ID: &str = "edgesteer-quit";
 
-const LOGO: &[u8] = include_bytes!("../assets/edgesteer-logo.png");
+// The menu bar renders the icon around 22pt; use the pre-scaled 2x bitmap so the
+// system does not downscale the 512px source (which draws the strokes soft).
+const LOGO: &[u8] = include_bytes!("../assets/edgesteer-logo-menu.png");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayEvent {

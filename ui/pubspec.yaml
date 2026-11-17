@@ -18,5 +18,8 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/config.example.json
-    - assets/edgesteer-logo.png
+    # A directory declaration is what lets Flutter resolve the density variants
+    # (assets/2.0x, assets/3.0x). Declaring the file alone bundles only the 1x
+    # bitmap, which then gets downscaled from the 512px source at paint time and
+    # draws blurry on a Retina display.
+    - assets/

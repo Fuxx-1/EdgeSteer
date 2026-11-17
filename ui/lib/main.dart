@@ -267,9 +267,11 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 16),
           Image.asset(
             'assets/edgesteer-logo.png',
-            width: 20,
-            height: 20,
-            filterQuality: FilterQuality.high,
+            width: 22,
+            height: 22,
+            // The 2x and 3x variants are exact-size, so this only matters if a
+            // display density without a variant asks for a scaled copy.
+            filterQuality: FilterQuality.medium,
           ),
           const SizedBox(width: 16),
           for (final entry in <(_Section, String)>[
