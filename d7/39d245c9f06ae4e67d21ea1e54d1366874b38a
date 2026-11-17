@@ -1,0 +1,30 @@
+Cargo.lock
+  h_e59efd41e8686d 658
+Cargo.toml
+  h_e59efd41e8686d 3
+README.md
+  h_e59efd41e8686d 61,73,82-84,87,89-93
+docs/en/README.md
+  h_e59efd41e8686d 73,75
+docs/en/development.md
+  h_e59efd41e8686d 68
+docs/en/operations.md
+  h_e59efd41e8686d 31,33,43-44,49-50,97
+docs/zh/development.md
+  h_e59efd41e8686d 68
+docs/zh/operations.md
+  h_e59efd41e8686d 31,33,43-44,49-51,98
+ui/pubspec.yaml
+  h_e59efd41e8686d 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d739d245c9f06ae4e67d21ea1e54d1366874b38a",
+  "prompts": {},
+  "humans": {
+    "h_e59efd41e8686d": {
+      "author": "Fuxx-1 <583742849@qq.com>"
+    }
+  }
+}
