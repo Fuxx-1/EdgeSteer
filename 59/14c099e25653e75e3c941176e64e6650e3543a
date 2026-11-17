@@ -1,0 +1,44 @@
+README.md
+  h_e59efd41e8686d 73
+docs/en/operations.md
+  h_e59efd41e8686d 33
+docs/zh/operations.md
+  h_e59efd41e8686d 33
+src/control.rs
+  h_e59efd41e8686d 282-283,290,307,451,454-485
+ui/lib/agent_client.dart
+  h_e59efd41e8686d 14-15,256-278,282,287,294-295
+ui/lib/app_state.dart
+  h_e59efd41e8686d 170-171
+ui/lib/main.dart
+  h_e59efd41e8686d 13,56,60-69,80-83,101,106,111-118,161-164,248-251
+ui/lib/pages/editor_scaffold.dart
+  h_e59efd41e8686d 24,31-33,99
+ui/lib/pages/overview_page.dart
+  h_e59efd41e8686d 1-5,13,20,25,34,65-72,114-117
+ui/lib/pages/resolver_page.dart
+  h_e59efd41e8686d 215-220,224-225
+ui/lib/pages/system_page.dart
+  h_e59efd41e8686d 1-2,4-6,17-18,39-41,43,77-78,80-85,88,262
+ui/lib/strings.dart
+  h_e59efd41e8686d 20-21,23-26,28-29,51,125
+ui/lib/widgets.dart
+  h_e59efd41e8686d 397,407-410,446-477
+ui/test/agent_client_test.dart
+  h_e59efd41e8686d 5,46,49-72
+ui/test/navigation_test.dart
+  h_e59efd41e8686d 53,56-60,64,68-75,79,81-82,84,86,90,96-98
+ui/test/pages_render_test.dart
+  h_e59efd41e8686d 75,79,110,113-117,119-122,124-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5914c099e25653e75e3c941176e64e6650e3543a",
+  "prompts": {},
+  "humans": {
+    "h_e59efd41e8686d": {
+      "author": "Fuxx-1 <583742849@qq.com>"
+    }
+  }
+}
