@@ -124,6 +124,38 @@ bool _isLoopbackAddress(String server) {
       normalized.startsWith('127.');
 }
 
+/// What the window shows, as reported by the agent. Lets a script confirm the
+/// interface state without screenshots.
+class UiSnapshot {
+  const UiSnapshot({
+    required this.running,
+    required this.page,
+    required this.language,
+    required this.appearance,
+    required this.configurationPath,
+    required this.configurationExists,
+    required this.configurationError,
+  });
+
+  factory UiSnapshot.fromJson(Map<String, dynamic> json) => UiSnapshot(
+        running: json['running'] as bool? ?? false,
+        page: json['page'] as String?,
+        language: json['language'] as String? ?? 'chinese',
+        appearance: json['appearance'] as String? ?? 'dark',
+        configurationPath: json['configuration_path'] as String? ?? '',
+        configurationExists: json['configuration_exists'] as bool? ?? false,
+        configurationError: json['configuration_error'] as String?,
+      );
+
+  final bool running;
+  final String? page;
+  final String language;
+  final String appearance;
+  final String configurationPath;
+  final bool configurationExists;
+  final String? configurationError;
+}
+
 class AgentStatus {
   const AgentStatus({
     required this.engineRunning,
@@ -136,6 +168,7 @@ class AgentStatus {
     required this.autostartSupported,
     required this.dnsServices,
     required this.uiRunning,
+    this.ui,
   });
 
   factory AgentStatus.fromJson(Map<String, dynamic> json) {
@@ -153,6 +186,9 @@ class AgentStatus {
               DnsServiceStatus.fromJson(value as Map<String, dynamic>))
           .toList(growable: false),
       uiRunning: json['ui_running'] as bool? ?? false,
+      ui: json['ui'] == null
+          ? null
+          : UiSnapshot.fromJson(json['ui'] as Map<String, dynamic>),
     );
   }
 
@@ -179,6 +215,7 @@ class AgentStatus {
   final bool autostartSupported;
   final List<DnsServiceStatus> dnsServices;
   final bool uiRunning;
+  final UiSnapshot? ui;
 
   /// The listener can only take over system DNS when it is a loopback address
   /// on port 53, because that is what the network service configuration points

@@ -1,4 +1,4 @@
-/// Editor for local and remote SRS rule sets.
+/// Rule-set editor.
 library;
 
 import 'package:flutter/material.dart';
@@ -7,6 +7,7 @@ import '../app_state.dart';
 import '../config_document.dart';
 import '../strings.dart';
 import '../widgets.dart';
+import 'editor_scaffold.dart';
 
 class RulesPage extends StatefulWidget {
   const RulesPage({
@@ -22,48 +23,8 @@ class RulesPage extends StatefulWidget {
   State<RulesPage> createState() => _RulesPageState();
 }
 
-class _RulesPageState extends State<RulesPage> {
+class _RulesPageState extends State<RulesPage> with FieldBinding<RulesPage> {
   int _selected = 0;
-  int _loadedSignature = -1;
-
-  final _tag = TextEditingController();
-  final _source = TextEditingController();
-  final _interval = TextEditingController();
-  final _timeout = TextEditingController();
-
-  @override
-  void dispose() {
-    _tag.dispose();
-    _source.dispose();
-    _interval.dispose();
-    _timeout.dispose();
-    super.dispose();
-  }
-
-  void _syncFromDocument(ConfigDocument document) {
-    final ruleSet = document.ruleSetAt(_selected);
-    final signature = Object.hash(
-      document.ruleSets.length,
-      _selected,
-      ruleSet?['tag'],
-      ruleSet?['type'],
-      document.draft.length,
-    );
-    if (signature == _loadedSignature) {
-      return;
-    }
-    _loadedSignature = signature;
-    final kind = RuleSetKind.fromWire(ruleSet?['type'] as String?);
-    _tag.text = ruleSet?['tag'] as String? ?? '';
-    final path = ruleSet?['path'] as String? ?? '';
-    final url = ruleSet?['url'] as String? ?? '';
-    _source.text = kind == RuleSetKind.local ? path : url;
-    final defaultInterval = kind == RuleSetKind.remote ? 86400 : 60;
-    final interval = ruleSet?['update_interval_secs'] ?? defaultInterval;
-    _interval.text = '$interval';
-    final timeout = ruleSet?['timeout_ms'] ?? 10000;
-    _timeout.text = '$timeout';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,9 +32,8 @@ class _RulesPageState extends State<RulesPage> {
     final document = controller.document;
     final strings = widget.strings;
     if (document == null) {
-      return Center(child: Text(strings.agentUnavailable));
+      return AgentUnavailable(strings: strings);
     }
-    _syncFromDocument(document);
 
     final count = document.ruleSets.length;
     if (_selected >= count) {
@@ -82,215 +42,149 @@ class _RulesPageState extends State<RulesPage> {
     final ruleSet = document.ruleSetAt(_selected);
     final kind = RuleSetKind.fromWire(ruleSet?['type'] as String?);
 
-    void edit(void Function(ConfigDocument document) change) {
-      controller.editDocument(change);
-      _loadedSignature = -1;
-    }
+    syncFields(
+      fieldSignature([
+        _selected,
+        count,
+        ruleSet?['tag'],
+        ruleSet?['type'],
+        document.draft.length,
+      ]),
+      () {
+        textField('tag').text = ruleSet?['tag'] as String? ?? '';
+        final localPath = ruleSet?['path'] as String?;
+        final remoteUrl = ruleSet?['url'] as String?;
+        final source = kind == RuleSetKind.local ? localPath : remoteUrl;
+        textField('source').text = source ?? '';
+        final defaultInterval = kind == RuleSetKind.remote ? 86400 : 60;
+        final interval = ruleSet?['update_interval_secs'] ?? defaultInterval;
+        final timeout = ruleSet?['timeout_ms'] ?? 10000;
+        textField('interval').text = '$interval';
+        textField('timeout').text = '$timeout';
+      },
+    );
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 26, 32, 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          PageHeader(title: strings.ruleSetsTitle, copy: strings.ruleSetsCopy),
-          const SizedBox(height: 20),
-          EdgePanel(
-            title: strings.ruleSetsTitle,
-            actions: ActionRow(
+    void edit(void Function(ConfigDocument document) change) =>
+        applyEdit(controller, this, change);
+
+    return EditorScaffold(
+      strings: strings,
+      listTitle: strings.ruleSets,
+      addLabel: strings.add,
+      removeLabel: strings.remove,
+      emptyLabel: strings.noRuleSets,
+      onAdd: () => setState(() {
+        _selected = document.addRuleSet(RuleSetKind.remote);
+        invalidateFields();
+      }),
+      onRemove: () => setState(() {
+        document.removeRuleSet(_selected);
+        invalidateFields();
+        _selected = count <= 1 ? 0 : _selected - 1;
+      }),
+      entries: [
+        for (var index = 0; index < count; index++)
+          _entry(document, index, strings),
+      ],
+      selected: _selected,
+      onSelect: (index) => setState(() {
+        _selected = index;
+        invalidateFields();
+      }),
+      detail: ruleSet == null
+          ? const SizedBox.shrink()
+          : EdgeGroup(
+              scrollable: true,
               children: [
-                OutlinedButton(
-                  onPressed: () => edit((document) {
-                    _selected = document.addRuleSet(RuleSetKind.remote);
-                  }),
-                  child: Text(strings.addRuleSet),
-                ),
-                TextButton(
-                  onPressed: count == 0
-                      ? null
-                      : () => edit((document) {
-                            document.removeRuleSet(_selected);
-                            _selected =
-                                _selected.clamp(0, document.ruleSets.length - 1);
-                          }),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Theme.of(context).colorScheme.error,
+                FormRow(
+                  label: strings.tag,
+                  child: EdgeField(
+                    controller: textField('tag'),
+                    onChanged: (value) => edit((document) =>
+                        document.setRuleSetField(_selected, 'tag', value)),
                   ),
-                  child: Text(strings.remove),
                 ),
-              ],
-            ),
-            children: [
-              if (count == 0)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    strings.noRuleSets,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                FormRow(
+                  label: strings.type,
+                  child: EdgeSelect<RuleSetKind>(
+                    value: kind,
+                    items: [
+                      for (final option in RuleSetKind.all)
+                        (
+                          value: option,
+                          label: option == RuleSetKind.remote
+                              ? strings.remote
+                              : strings.local,
+                        ),
+                    ],
+                    onChanged: (value) => edit((document) =>
+                        document.setRuleSetType(_selected, value)),
+                  ),
+                ),
+                FormRow(
+                  label: strings.source,
+                  child: EdgeField(
+                    controller: textField('source'),
+                    monospace: true,
+                    hint: kind == RuleSetKind.remote
+                        ? 'https://…/rules.srs'
+                        : '/path/rules.srs',
+                    onChanged: (value) => edit((document) =>
+                        document.setRuleSetField(
+                          _selected,
+                          kind == RuleSetKind.remote ? 'url' : 'path',
+                          value,
+                        )),
+                  ),
+                ),
+                FormRowPair(
+                  left: FormRow(
+                    label: strings.interval,
+                    child: EdgeField(
+                      controller: textField('interval'),
+                      numeric: true,
+                      onChanged: (value) {
+                        final parsed = int.tryParse(value);
+                        if (parsed != null) {
+                          edit((document) => document.setRuleSetField(
+                              _selected, 'update_interval_secs', parsed));
+                        }
+                      },
                     ),
                   ),
-                ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: LabeledField(
-                      label: strings.ruleSetTag,
-                      child: Container(
-                        height: 40,
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest
-                              .withValues(alpha: 0.45),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: Theme.of(context).colorScheme.outlineVariant,
-                          ),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int>(
-                            value: count == 0 ? null : _selected,
-                            isExpanded: true,
-                            isDense: true,
-                            hint: Text(
-                              strings.addRuleSet,
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                            items: [
-                              for (var index = 0; index < count; index++)
-                                DropdownMenuItem<int>(
-                                  value: index,
-                                  child: Text(
-                                    '${(index + 1).toString().padLeft(2, '0')}  '
-                                    '${document.ruleSetAt(index)?['tag'] ?? 'rule-set'}',
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                ),
-                            ],
+                  right: kind == RuleSetKind.remote
+                      ? FormRow(
+                          label: strings.downloadTimeout,
+                          child: EdgeField(
+                            controller: textField('timeout'),
+                            numeric: true,
                             onChanged: (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _selected = value;
-                                  _loadedSignature = -1;
-                                });
+                              final parsed = int.tryParse(value);
+                              if (parsed != null) {
+                                edit((document) => document.setRuleSetField(
+                                    _selected, 'timeout_ms', parsed));
                               }
                             },
                           ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: EdgeDropdown<RuleSetKind>(
-                      label: strings.ruleSetType,
-                      value: kind,
-                      items: [
-                        for (final option in RuleSetKind.all)
-                          (
-                            value: option,
-                            label: option == RuleSetKind.remote
-                                ? strings.t('远程 SRS', 'Remote SRS')
-                                : strings.t('本地 SRS', 'Local SRS'),
-                          ),
-                      ],
-                      onChanged: (value) => edit(
-                        (document) =>
-                            document.setRuleSetType(_selected, value),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: LabeledField(
-                      label: strings.ruleSetTag,
-                      child: EdgeTextField(
-                        controller: _tag,
-                        onChanged: (value) => edit(
-                          (document) =>
-                              document.setRuleSetField(_selected, 'tag', value),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 3,
-                    child: LabeledField(
-                      label: strings.ruleSetSource,
-                      child: EdgeTextField(
-                        controller: _source,
-                        hint: kind == RuleSetKind.remote
-                            ? 'https://...srs'
-                            : '/path/file.srs',
-                        onChanged: (value) => edit(
-                          (document) => document.setRuleSetField(
-                            _selected,
-                            kind == RuleSetKind.remote ? 'url' : 'path',
-                            value,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: LabeledField(
-                      label: strings.refreshInterval,
-                      child: EdgeTextField(
-                        controller: _interval,
-                        numeric: true,
-                        onChanged: (value) {
-                          final parsed = int.tryParse(value);
-                          if (parsed != null) {
-                            edit(
-                              (document) => document.setRuleSetField(
-                                  _selected, 'update_interval_secs', parsed),
-                            );
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                  if (kind == RuleSetKind.remote) ...[
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: LabeledField(
-                        label: strings.downloadTimeout,
-                        child: EdgeTextField(
-                          controller: _timeout,
-                          numeric: true,
-                          onChanged: (value) {
-                            final parsed = int.tryParse(value);
-                            if (parsed != null) {
-                              edit(
-                                (document) => document.setRuleSetField(
-                                    _selected, 'timeout_ms', parsed),
-                              );
-                            }
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+    );
+  }
+
+  ListEntry _entry(ConfigDocument document, int index, Strings strings) {
+    final ruleSet = document.ruleSetAt(index);
+    final tag = ruleSet?['tag'] as String? ?? '';
+    final kind = RuleSetKind.fromWire(ruleSet?['type'] as String?);
+    final localPath = ruleSet?['path'] as String? ?? '';
+    final remoteUrl = ruleSet?['url'] as String? ?? '';
+    final source = kind == RuleSetKind.local ? localPath : remoteUrl;
+    return ListEntry(
+      title: tag.isEmpty ? '—' : tag,
+      subtitle: source.isEmpty ? strings.source : source,
+      badge: kind == RuleSetKind.remote ? 'SRS' : 'FILE',
     );
   }
 }

@@ -61,8 +61,8 @@ pub enum AgentCommand {
     RemoveLegacyService,
     /// Re-validate the configuration file and refresh status.
     Refresh,
-    /// Open (or focus) the user interface window.
-    OpenUi,
+    /// Open (or focus) the user interface window, optionally on a page.
+    OpenUi { page: Option<UiPage> },
     /// Quit the agent after restoring managed system DNS.
     Quit,
     /// Read the configuration file. A missing file yields the bundled default
@@ -113,6 +113,8 @@ pub struct AgentStatus {
     pub dns_services: Vec<DnsServiceStatus>,
     /// Whether the interface currently has a live window process.
     pub ui_running: bool,
+    /// What the interface window shows. `None` when no window is running.
+    pub ui: Option<UiSnapshot>,
 }
 
 impl AgentStatus {
@@ -128,6 +130,7 @@ impl AgentStatus {
             autostart_supported: false,
             dns_services: Vec::new(),
             ui_running: false,
+            ui: None,
         }
     }
 }
@@ -139,6 +142,22 @@ pub struct DnsServiceStatus {
     pub enabled: bool,
     pub servers: Vec<String>,
     pub automatic: bool,
+}
+
+/// What the interface window currently shows. This is the agent-facing view of
+/// the UI: enough to know whether a window exists and what it is displaying,
+/// without screen scraping.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UiSnapshot {
+    pub running: bool,
+    /// The page the window opened on, when it is known.
+    pub page: Option<UiPage>,
+    pub language: Language,
+    pub appearance: AppearanceMode,
+    pub configuration_path: String,
+    pub configuration_exists: bool,
+    /// `null` when the saved document is valid.
+    pub configuration_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,6 +238,34 @@ pub enum Language {
 impl Default for Language {
     fn default() -> Self {
         Self::Chinese
+    }
+}
+
+/// A page the interface can be opened on. The wire names match the Flutter
+/// interface's page identifiers so `EDGESTEER_UI_PAGE` and the control protocol
+/// agree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiPage {
+    Status,
+    Resolvers,
+    RuleSets,
+    Preferred,
+    Json,
+    System,
+}
+
+impl UiPage {
+    /// The value the interface reads from its environment.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Resolvers => "resolvers",
+            Self::RuleSets => "ruleSets",
+            Self::Preferred => "preferred",
+            Self::Json => "json",
+            Self::System => "system",
+        }
     }
 }
 

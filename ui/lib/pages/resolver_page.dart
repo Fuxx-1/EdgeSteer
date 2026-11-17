@@ -1,9 +1,4 @@
-/// Structured editor for the listener, the entry layer, and every resolver
-/// layer.
-///
-/// Fields are text controllers so typing never re-serializes the document on
-/// each keystroke; the document is updated on change and the agent revalidates
-/// it. Selecting a different layer reloads the controllers from the document.
+/// Resolver chain editor: listener settings above, layer master-detail below.
 library;
 
 import 'package:flutter/material.dart';
@@ -12,6 +7,7 @@ import '../app_state.dart';
 import '../config_document.dart';
 import '../strings.dart';
 import '../widgets.dart';
+import 'editor_scaffold.dart';
 
 class ResolverPage extends StatefulWidget {
   const ResolverPage({
@@ -27,561 +23,406 @@ class ResolverPage extends StatefulWidget {
   State<ResolverPage> createState() => _ResolverPageState();
 }
 
-class _ResolverPageState extends State<ResolverPage> {
-  int _selectedLayer = 0;
-  int _loadedSignature = -1;
-
-  final _listenerAddress = TextEditingController();
-  final _entryName = TextEditingController();
-  final _requestTimeout = TextEditingController();
-  final _rangeRefresh = TextEditingController();
-
-  final _layerTag = TextEditingController();
-  final _layerNext = TextEditingController();
-  final _layerFallback = TextEditingController();
-  final _layerPlugin = TextEditingController();
-  final _layerAddress = TextEditingController();
-  final _layerUrl = TextEditingController();
-  final _layerServerName = TextEditingController();
-  final _layerTimeout = TextEditingController();
-  final _layerRefresh = TextEditingController();
-  final _layerKeywords = TextEditingController();
-  final _layerRuleSets = TextEditingController();
-
-  @override
-  void dispose() {
-    for (final controller in [
-      _listenerAddress,
-      _entryName,
-      _requestTimeout,
-      _rangeRefresh,
-      _layerTag,
-      _layerNext,
-      _layerFallback,
-      _layerPlugin,
-      _layerAddress,
-      _layerUrl,
-      _layerServerName,
-      _layerTimeout,
-      _layerRefresh,
-      _layerKeywords,
-      _layerRuleSets,
-    ]) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  /// Reloads the text controllers when the selected layer or the underlying
-  /// document changes identity (reload, layer add/remove/move).
-  void _syncFromDocument(ConfigDocument document) {
-    final signature = Object.hash(
-      document.layers.length,
-      _selectedLayer,
-      document.layerAt(_selectedLayer)?['tag'],
-      document.layerAt(_selectedLayer)?['type'],
-      document.draft.length,
-    );
-    if (signature == _loadedSignature) {
-      return;
-    }
-    _loadedSignature = signature;
-
-    _listenerAddress.text = document.listenerAddress;
-    _entryName.text = document.entry;
-    _requestTimeout.text = '${document.requestTimeoutMs}';
-    _rangeRefresh.text = '${document.rangeRefreshSecs}';
-
-    final layer = document.layerAt(_selectedLayer);
-    _layerTag.text = layer?['tag'] as String? ?? '';
-    _layerNext.text = layer?['next'] as String? ?? '';
-    _layerFallback.text = layer?['fallback'] as String? ?? '';
-    _layerPlugin.text = layer?['plugin'] as String? ?? '';
-    _layerAddress.text = layer?['address'] as String? ?? '';
-    _layerUrl.text = layer?['url'] as String? ?? '';
-    _layerServerName.text = layer?['server_name'] as String? ?? '';
-    _layerTimeout.text = '${layer?['timeout_ms'] ?? 3000}';
-    _layerRefresh.text = '${layer?['refresh_secs'] ?? 30}';
-    final match = layer?['match'];
-    if (match is Map<String, dynamic>) {
-      _layerKeywords.text = joinList(match['keywords']);
-      _layerRuleSets.text = joinList(match['rule_sets']);
-    } else {
-      _layerKeywords.text = '';
-      _layerRuleSets.text = '';
-    }
-  }
+class _ResolverPageState extends State<ResolverPage>
+    with FieldBinding<ResolverPage> {
+  int _selected = 0;
 
   @override
   Widget build(BuildContext context) {
     final controller = EdgeSteerScope.of(context);
     final document = controller.document;
     final strings = widget.strings;
-
     if (document == null) {
-      return Center(child: Text(strings.agentUnavailable));
+      return AgentUnavailable(strings: strings);
     }
-    _syncFromDocument(document);
 
     final layerCount = document.layers.length;
-    if (_selectedLayer >= layerCount) {
-      _selectedLayer = layerCount == 0 ? 0 : layerCount - 1;
+    if (_selected >= layerCount) {
+      _selected = layerCount == 0 ? 0 : layerCount - 1;
     }
-    final layer = document.layerAt(_selectedLayer);
+    final layer = document.layerAt(_selected);
     final kind = LayerKind.fromWire(layer?['type'] as String?);
     final match = layer?['match'];
-    final mode = MatchMode.fromWire(
-      match is Map<String, dynamic> ? match['mode'] as String? : null,
+    final matchMap =
+        match is Map<String, dynamic> ? match : const <String, dynamic>{};
+    final mode = MatchMode.fromWire(matchMap['mode'] as String?);
+
+    syncFields(
+      fieldSignature([
+        _selected,
+        layerCount,
+        layer?['tag'],
+        layer?['type'],
+        document.draft.length,
+        document.entry,
+      ]),
+      () {
+        textField('listener').text = document.listenerAddress;
+        textField('entry').text = document.entry;
+        textField('timeout').text = '${document.requestTimeoutMs}';
+        textField('range').text = '${document.rangeRefreshSecs}';
+        textField('tag').text = layer?['tag'] as String? ?? '';
+        textField('next').text = layer?['next'] as String? ?? '';
+        textField('fallback').text = layer?['fallback'] as String? ?? '';
+        textField('plugin').text = layer?['plugin'] as String? ?? '';
+        textField('address').text = layer?['address'] as String? ?? '';
+        textField('url').text = layer?['url'] as String? ?? '';
+        textField('serverName').text = layer?['server_name'] as String? ?? '';
+        textField('layerTimeout').text = '${layer?['timeout_ms'] ?? 3000}';
+        textField('refresh').text = '${layer?['refresh_secs'] ?? 30}';
+        textField('keywords').text = joinList(matchMap['keywords']);
+        textField('ruleSets').text = joinList(matchMap['rule_sets']);
+      },
     );
 
-    void edit(void Function(ConfigDocument document) change) {
-      controller.editDocument(change);
-      _loadedSignature = -1;
-    }
+    void edit(void Function(ConfigDocument document) change) =>
+        applyEdit(controller, this, change);
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 26, 32, 32),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PageHeader(title: strings.resolversTitle, copy: strings.resolversCopy),
-          const SizedBox(height: 20),
-          EdgePanel(
-            title: strings.entryAndListener,
+          EdgeGroup(
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: LabeledField(
-                      label: strings.listenerAddress,
-                      child: EdgeTextField(
-                        controller: _listenerAddress,
-                        hint: '127.0.0.1:53',
-                        onChanged: (value) => edit(
-                          (document) => document.setListenerAddress(value),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: LabeledField(
-                      label: strings.entryLayer,
-                      child: EdgeTextField(
-                        controller: _entryName,
-                        hint: 'local-keyword',
-                        onChanged: (value) => edit(
-                          (document) => document.setEntry(value),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: LabeledField(
-                      label: strings.requestTimeout,
-                      child: EdgeTextField(
-                        controller: _requestTimeout,
-                        numeric: true,
-                        hint: '8000',
-                        onChanged: (value) {
-                          final parsed = int.tryParse(value);
-                          if (parsed != null) {
-                            edit(
-                              (document) =>
-                                  document.setRequestTimeoutMs(parsed),
-                            );
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: LabeledField(
-                      label: strings.rangeRefresh,
-                      child: EdgeTextField(
-                        controller: _rangeRefresh,
-                        numeric: true,
-                        hint: '86400',
-                        onChanged: (value) {
-                          final parsed = int.tryParse(value);
-                          if (parsed != null) {
-                            edit(
-                              (document) =>
-                                  document.setRangeRefreshSecs(parsed),
-                            );
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                ],
+              FormRow(
+                label: strings.listener,
+                child: EdgeField(
+                  controller: textField('listener'),
+                  hint: '127.0.0.1:53',
+                  monospace: true,
+                  onChanged: (value) =>
+                      edit((document) => document.setListenerAddress(value)),
+                ),
               ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Checkbox(
-                    value: document.allowRemote,
-                    onChanged: (value) => edit(
-                      (document) => document.setAllowRemote(value ?? false),
-                    ),
+              FormRow(
+                label: strings.entry,
+                hint: document.entry.isNotEmpty &&
+                        !document.layerTags.contains(document.entry)
+                    ? strings.entryMissing
+                    : null,
+                child: EdgeField(
+                  controller: textField('entry'),
+                  hint: 'local-keyword',
+                  onChanged: (value) =>
+                      edit((document) => document.setEntry(value)),
+                ),
+              ),
+              FormRowPair(
+                left: FormRow(
+                  label: strings.requestTimeout,
+                  child: EdgeField(
+                    controller: textField('timeout'),
+                    numeric: true,
+                    onChanged: (value) {
+                      final parsed = int.tryParse(value);
+                      if (parsed != null) {
+                        edit((document) => document.setRequestTimeoutMs(parsed));
+                      }
+                    },
                   ),
-                  Text(
-                    strings.allowRemote,
-                    style: const TextStyle(fontSize: 13),
+                ),
+                right: FormRow(
+                  label: strings.rangeRefresh,
+                  child: EdgeField(
+                    controller: textField('range'),
+                    numeric: true,
+                    onChanged: (value) {
+                      final parsed = int.tryParse(value);
+                      if (parsed != null) {
+                        edit((document) => document.setRangeRefreshSecs(parsed));
+                      }
+                    },
                   ),
-                ],
+                ),
+              ),
+              FormRow(
+                label: strings.allowRemote,
+                child: FormSwitch(
+                  value: document.allowRemote,
+                  onChanged: (value) =>
+                      edit((document) => document.setAllowRemote(value)),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          EdgePanel(
-            title: strings.resolversTitle,
-            actions: ActionRow(
-              children: [
-                OutlinedButton(
-                  onPressed: () => edit((document) {
-                    _selectedLayer = document.addLayer(LayerKind.local);
-                  }),
-                  child: Text(strings.addLayer),
-                ),
-                TextButton(
-                  onPressed: _selectedLayer <= 0
-                      ? null
-                      : () => edit((document) {
-                            document.moveLayer(_selectedLayer, upward: true);
-                            _selectedLayer -= 1;
-                          }),
-                  child: Text(strings.moveUp),
-                ),
-                TextButton(
-                  onPressed: _selectedLayer >= layerCount - 1
-                      ? null
-                      : () => edit((document) {
-                            document.moveLayer(_selectedLayer, upward: false);
-                            _selectedLayer += 1;
-                          }),
-                  child: Text(strings.moveDown),
-                ),
-                TextButton(
-                  onPressed: layerCount == 0
-                      ? null
-                      : () => edit((document) {
-                            document.removeLayer(_selectedLayer);
-                            _selectedLayer = _selectedLayer
-                                .clamp(0, document.layers.length - 1);
-                          }),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Theme.of(context).colorScheme.error,
-                  ),
-                  child: Text(strings.remove),
-                ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: EditorScaffold(
+              strings: strings,
+              listTitle: strings.layers,
+              addLabel: strings.add,
+              removeLabel: strings.remove,
+              emptyLabel: strings.noLayers,
+              onAdd: () => setState(() {
+                _selected = document.addLayer(LayerKind.local);
+              }),
+              onRemove: () => setState(() {
+                document.removeLayer(_selected);
+                invalidateFields();
+                _selected = layerCount <= 1 ? 0 : _selected - 1;
+              }),
+              entries: [
+                for (var index = 0; index < layerCount; index++)
+                  _layerEntry(document, index, strings),
               ],
+              selected: _selected,
+              onSelect: (index) => setState(() {
+                _selected = index;
+                invalidateFields();
+              }),
+              detail: _LayerDetail(
+                strings: strings,
+                document: document,
+                index: _selected,
+                kind: kind,
+                mode: mode,
+                controllers: {
+                  for (final key in const [
+                    'tag',
+                    'next',
+                    'fallback',
+                    'plugin',
+                    'address',
+                    'url',
+                    'serverName',
+                    'layerTimeout',
+                    'refresh',
+                    'keywords',
+                    'ruleSets',
+                  ])
+                    key: textField(key),
+                },
+                onEdit: edit,
+              ),
             ),
-            children: [
-              if (layerCount == 0)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    strings.noLayers,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: LabeledField(
-                      label: strings.layerTag,
-                      child: Container(
-                        height: 40,
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest
-                              .withValues(alpha: 0.45),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: Theme.of(context).colorScheme.outlineVariant,
-                          ),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int>(
-                            value: layerCount == 0 ? null : _selectedLayer,
-                            isExpanded: true,
-                            isDense: true,
-                            hint: Text(
-                              strings.addLayer,
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                            items: [
-                              for (var index = 0; index < layerCount; index++)
-                                DropdownMenuItem<int>(
-                                  value: index,
-                                  child: Text(
-                                    '${(index + 1).toString().padLeft(2, '0')}  '
-                                    '${document.layerAt(index)?['tag'] ?? 'layer'}'
-                                    ' (${document.layerAt(index)?['type'] ?? '?'})',
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                ),
-                            ],
-                            onChanged: (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _selectedLayer = value;
-                                  _loadedSignature = -1;
-                                });
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: EdgeDropdown<LayerKind>(
-                      label: strings.layerType,
-                      value: kind,
-                      items: [
-                        for (final option in LayerKind.all)
-                          (value: option, label: _layerKindLabel(option, strings)),
-                      ],
-                      onChanged: (value) => edit(
-                        (document) => document.setLayerType(_selectedLayer, value),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _fieldRow(
-                children: [
-                  LabeledField(
-                    label: strings.layerTag,
-                    child: EdgeTextField(
-                      controller: _layerTag,
-                      onChanged: (value) => edit(
-                        (document) => document.setLayerField(
-                            _selectedLayer, 'tag', value),
-                      ),
-                    ),
-                  ),
-                  LabeledField(
-                    label: strings.nextLayer,
-                    child: EdgeTextField(
-                      controller: _layerNext,
-                      hint: 'next layer tag',
-                      onChanged: (value) => edit(
-                        (document) => document.setLayerField(
-                            _selectedLayer, 'next', value),
-                      ),
-                    ),
-                  ),
-                  LabeledField(
-                    label: strings.fallbackLayer,
-                    child: EdgeTextField(
-                      controller: _layerFallback,
-                      hint: 'fallback layer tag',
-                      onChanged: (value) => edit(
-                        (document) => document.setLayerField(
-                            _selectedLayer, 'fallback', value),
-                      ),
-                    ),
-                  ),
-                  LabeledField(
-                    label: strings.responsePlugin,
-                    child: EdgeTextField(
-                      controller: _layerPlugin,
-                      hint: 'plugin tag (optional)',
-                      onChanged: (value) => edit(
-                        (document) => document.setLayerField(
-                            _selectedLayer, 'plugin', value),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (kind != LayerKind.local) ...[
-                const SizedBox(height: 12),
-                _fieldRow(
-                  children: [
-                    LabeledField(
-                      label: strings.upstreamAddress,
-                      child: EdgeTextField(
-                        controller: _layerAddress,
-                        hint: '1.1.1.1:443',
-                        onChanged: (value) => edit(
-                          (document) => document.setLayerField(
-                              _selectedLayer, 'address', value),
-                        ),
-                      ),
-                    ),
-                    if (kind == LayerKind.doh)
-                      LabeledField(
-                        label: strings.dohUrl,
-                        child: EdgeTextField(
-                          controller: _layerUrl,
-                          hint: 'https://.../dns-query',
-                          onChanged: (value) => edit(
-                            (document) => document.setLayerField(
-                                _selectedLayer, 'url', value),
-                          ),
-                        ),
-                      ),
-                    if (kind == LayerKind.dot)
-                      LabeledField(
-                        label: strings.dotServerName,
-                        child: EdgeTextField(
-                          controller: _layerServerName,
-                          hint: 'cloudflare-dns.com',
-                          onChanged: (value) => edit(
-                            (document) => document.setLayerField(
-                                _selectedLayer, 'server_name', value),
-                          ),
-                        ),
-                      ),
-                    LabeledField(
-                      label: strings.layerTimeout,
-                      child: EdgeTextField(
-                        controller: _layerTimeout,
-                        numeric: true,
-                        hint: '3000',
-                        onChanged: (value) {
-                          final parsed = int.tryParse(value);
-                          if (parsed != null) {
-                            edit(
-                              (document) => document.setLayerField(
-                                  _selectedLayer, 'timeout_ms', parsed),
-                            );
-                          }
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              if (kind == LayerKind.local) ...[
-                const SizedBox(height: 12),
-                _fieldRow(
-                  children: [
-                    LabeledField(
-                      label: strings.layerTimeout,
-                      child: EdgeTextField(
-                        controller: _layerTimeout,
-                        numeric: true,
-                        hint: '1800',
-                        onChanged: (value) {
-                          final parsed = int.tryParse(value);
-                          if (parsed != null) {
-                            edit(
-                              (document) => document.setLayerField(
-                                  _selectedLayer, 'timeout_ms', parsed),
-                            );
-                          }
-                        },
-                      ),
-                    ),
-                    LabeledField(
-                      label: strings.localRefresh,
-                      child: EdgeTextField(
-                        controller: _layerRefresh,
-                        numeric: true,
-                        hint: '30',
-                        onChanged: (value) {
-                          final parsed = int.tryParse(value);
-                          if (parsed != null) {
-                            edit(
-                              (document) => document.setLayerField(
-                                  _selectedLayer, 'refresh_secs', parsed),
-                            );
-                          }
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              const SizedBox(height: 12),
-              _fieldRow(
-                children: [
-                  EdgeDropdown<MatchMode>(
-                    label: strings.matchMode,
-                    value: mode,
-                    items: [
-                      for (final option in MatchMode.all)
-                        (
-                          value: option,
-                          label: option == MatchMode.label
-                              ? strings.t('完整 DNS 标签', 'Full DNS label')
-                              : strings.t('包含关键词', 'Literal substring'),
-                        ),
-                    ],
-                    onChanged: (value) => edit(
-                      (document) =>
-                          document.setLayerMatchMode(_selectedLayer, value),
-                    ),
-                  ),
-                  LabeledField(
-                    label: strings.keywords,
-                    child: EdgeTextField(
-                      controller: _layerKeywords,
-                      hint: 'b2c, mi, local',
-                      onChanged: (value) => edit(
-                        (document) => document.setLayerMatchList(
-                            _selectedLayer, 'keywords', parseList(value)),
-                      ),
-                    ),
-                  ),
-                  LabeledField(
-                    label: strings.ruleSetTags,
-                    child: EdgeTextField(
-                      controller: _layerRuleSets,
-                      hint: 'geosite-cn',
-                      onChanged: (value) => edit(
-                        (document) => document.setLayerMatchList(
-                            _selectedLayer, 'rule_sets', parseList(value)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _fieldRow({required List<Widget> children}) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  ListEntry _layerEntry(
+    ConfigDocument document,
+    int index,
+    Strings strings,
+  ) {
+    final layer = document.layerAt(index);
+    final tag = layer?['tag'] as String? ?? '';
+    final kind = LayerKind.fromWire(layer?['type'] as String?);
+    final next = layer?['next'] as String?;
+    final fallback = layer?['fallback'] as String?;
+    final links = [
+      if (next != null && next.isNotEmpty) '→ $next',
+      if (fallback != null && fallback.isNotEmpty) '↯ $fallback',
+    ];
+    return ListEntry(
+      title: tag.isEmpty ? '—' : tag,
+      subtitle: links.isEmpty ? kind.wire : links.join('  '),
+      badge: document.entry == tag ? strings.entry.toUpperCase() : null,
+    );
+  }
+}
+
+class _LayerDetail extends StatelessWidget {
+  const _LayerDetail({
+    required this.strings,
+    required this.document,
+    required this.index,
+    required this.kind,
+    required this.mode,
+    required this.controllers,
+    required this.onEdit,
+  });
+
+  final Strings strings;
+  final ConfigDocument document;
+  final int index;
+  final LayerKind kind;
+  final MatchMode mode;
+  final Map<String, TextEditingController> controllers;
+  final void Function(void Function(ConfigDocument document)) onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final layer = document.layerAt(index);
+    if (layer == null) {
+      return const SizedBox.shrink();
+    }
+
+    void setField(String key, Object? value) =>
+        onEdit((document) => document.setLayerField(index, key, value));
+
+    return EdgeGroup(
+      scrollable: true,
       children: [
-        for (var index = 0; index < children.length; index++) ...[
-          if (index > 0) const SizedBox(width: 12),
-          Expanded(child: children[index]),
+        FormRow(
+          label: strings.tag,
+          child: EdgeField(
+            controller: controllers['tag']!,
+            onChanged: (value) => setField('tag', value),
+          ),
+        ),
+        FormRow(
+          label: strings.type,
+          child: EdgeSelect<LayerKind>(
+            value: kind,
+            items: [
+              for (final option in LayerKind.all)
+                (value: option, label: _kindLabel(option, strings)),
+            ],
+            onChanged: (value) =>
+                onEdit((document) => document.setLayerType(index, value)),
+          ),
+        ),
+        FormRowPair(
+          left: FormRow(
+            label: strings.next,
+            child: EdgeField(
+              controller: controllers['next']!,
+              hint: '—',
+              onChanged: (value) => setField('next', value),
+            ),
+          ),
+          right: FormRow(
+            label: strings.fallback,
+            child: EdgeField(
+              controller: controllers['fallback']!,
+              hint: '—',
+              onChanged: (value) => setField('fallback', value),
+            ),
+          ),
+        ),
+        FormRow(
+          label: strings.plugin,
+          child: EdgeField(
+            controller: controllers['plugin']!,
+            hint: '—',
+            onChanged: (value) => setField('plugin', value),
+          ),
+        ),
+        if (kind != LayerKind.local) ...[
+          const _Rule(),
+          FormRow(
+            label: strings.address,
+            child: EdgeField(
+              controller: controllers['address']!,
+              monospace: true,
+              onChanged: (value) => setField('address', value),
+            ),
+          ),
+          if (kind == LayerKind.doh)
+            FormRow(
+              label: strings.url,
+              child: EdgeField(
+                controller: controllers['url']!,
+                monospace: true,
+                onChanged: (value) => setField('url', value),
+              ),
+            ),
+          if (kind == LayerKind.dot)
+            FormRow(
+              label: strings.serverName,
+              child: EdgeField(
+                controller: controllers['serverName']!,
+                onChanged: (value) => setField('server_name', value),
+              ),
+            ),
         ],
+        FormRowPair(
+          left: FormRow(
+            label: strings.timeout,
+            child: EdgeField(
+              controller: controllers['layerTimeout']!,
+              numeric: true,
+              onChanged: (value) {
+                final parsed = int.tryParse(value);
+                if (parsed != null) {
+                  setField('timeout_ms', parsed);
+                }
+              },
+            ),
+          ),
+          right: kind == LayerKind.local
+              ? FormRow(
+                  label: strings.layerRefresh,
+                  child: EdgeField(
+                    controller: controllers['refresh']!,
+                    numeric: true,
+                    onChanged: (value) {
+                      final parsed = int.tryParse(value);
+                      if (parsed != null) {
+                        setField('refresh_secs', parsed);
+                      }
+                    },
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+        const _Rule(),
+        FormRow(
+          label: strings.matchMode,
+          child: EdgeSelect<MatchMode>(
+            value: mode,
+            items: [
+              for (final option in MatchMode.all)
+                (
+                  value: option,
+                  label: option == MatchMode.label
+                      ? strings.labelMode
+                      : strings.containsMode,
+                ),
+            ],
+            onChanged: (value) =>
+                onEdit((document) => document.setLayerMatchMode(index, value)),
+          ),
+        ),
+        FormRow(
+          label: strings.keywords,
+          child: EdgeField(
+            controller: controllers['keywords']!,
+            hint: 'b2c, mi',
+            onChanged: (value) => onEdit(
+              (document) =>
+                  document.setLayerMatchList(index, 'keywords', parseList(value)),
+            ),
+          ),
+        ),
+        FormRow(
+          label: strings.matchRuleSets,
+          child: EdgeField(
+            controller: controllers['ruleSets']!,
+            hint: 'geosite-cn',
+            onChanged: (value) => onEdit(
+              (document) => document.setLayerMatchList(
+                  index, 'rule_sets', parseList(value)),
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  String _layerKindLabel(LayerKind kind, Strings strings) => switch (kind) {
+  String _kindLabel(LayerKind kind, Strings strings) => switch (kind) {
         LayerKind.udp => 'UDP',
         LayerKind.tcp => 'TCP',
         LayerKind.doh => 'DoH',
         LayerKind.dot => 'DoT',
-        LayerKind.local => strings.t('动态本地 DNS', 'Dynamic local DNS'),
+        LayerKind.local => strings.localLayer,
       };
+}
+
+class _Rule extends StatelessWidget {
+  const _Rule();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Divider(
+        height: 1,
+        color: Theme.of(context).colorScheme.outlineVariant,
+      ),
+    );
+  }
 }

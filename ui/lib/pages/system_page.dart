@@ -1,4 +1,7 @@
-/// Application preferences, login start, system DNS, and network services.
+/// System page: appearance, login item, system DNS, network services, quit.
+///
+/// Each capability is one row: label, current state, single action. State text
+/// explains itself, so there is no descriptive paragraph per section.
 library;
 
 import 'package:flutter/material.dart';
@@ -24,54 +27,54 @@ class SystemPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = EdgeSteerScope.of(context);
-    final status = controller.status;
     final scheme = Theme.of(context).colorScheme;
+    final status = controller.status;
 
-    final systemDnsDetail = _systemDnsDetail(controller, strings);
-    final systemDnsEnabled = controller.systemDnsEnabled;
-    final canEnableSystemDns = controller.configurationValid &&
-        controller.engineRunning &&
-        controller.listenerSupportsSystemDns &&
-        (status?.listenerReady ?? false);
+    final systemDnsState = _systemDnsState(controller, strings);
+    final canEnableSystemDns = systemDnsState == _SystemDnsState.ready;
+    final autostartSupported = status?.autostartSupported ?? false;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 26, 32, 32),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PageHeader(title: strings.systemTitle, copy: strings.systemCopy),
-          const SizedBox(height: 20),
-          EdgePanel(
-            title: strings.application,
-            subtitle: strings.applicationCopy,
+          EdgeGroup(
+            header: strings.application,
             children: [
-              Row(
-                children: [
-                  SizedBox(
-                    width: 190,
-                    child: EdgeDropdown<String>(
-                      label: strings.language,
-                      value: controller.preferences.isChinese
-                          ? 'chinese'
-                          : 'english',
+              FormRow(
+                label: strings.language,
+                labelWidth: 96,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(
+                    width: 160,
+                    child: EdgeSelect<String>(
+                      value:
+                          controller.preferences.isChinese ? 'chinese' : 'english',
                       items: const [
                         (value: 'chinese', label: '简体中文'),
                         (value: 'english', label: 'English'),
                       ],
                       onChanged: (value) async {
-                        final error = await controller
-                            .setLanguage(value == 'chinese');
+                        final error =
+                            await controller.setLanguage(value == 'chinese');
                         if (error != null) {
                           onNotice(error);
                         }
                       },
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  SizedBox(
-                    width: 150,
-                    child: EdgeDropdown<String>(
-                      label: strings.appearance,
+                ),
+              ),
+              FormRow(
+                label: strings.appearance,
+                labelWidth: 96,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(
+                    width: 160,
+                    child: EdgeSelect<String>(
                       value: controller.preferences.isDark ? 'dark' : 'light',
                       items: [
                         (value: 'dark', label: strings.dark),
@@ -86,76 +89,81 @@ class SystemPage extends StatelessWidget {
                       },
                     ),
                   ),
-                ],
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          EdgePanel(
-            title: strings.openAtLogin,
-            subtitle: status?.autostartSupported ?? false
-                ? (controller.autostartEnabled
-                    ? strings.autostartEnabled
-                    : strings.autostartDisabled)
-                : strings.autostartUnsupported,
-            actions: OutlinedButton(
-              onPressed: controller.busy ||
-                      (!controller.autostartEnabled &&
-                          !(status?.autostartSupported ?? false))
-                  ? null
-                  : () => _run(
-                        context,
-                        controller.autostartEnabled
-                            ? AgentAction.disableAutoStart
-                            : AgentAction.enableAutoStart,
-                      ),
-              child: Text(
-                controller.autostartEnabled
+          const SizedBox(height: 12),
+          EdgeGroup(
+            header: strings.openAtLogin,
+            children: [
+              _CapabilityRow(
+                state: controller.autostartEnabled
+                    ? strings.autostartOn
+                    : autostartSupported
+                        ? strings.autostartOff
+                        : strings.autostartNeedsBundle,
+                active: controller.autostartEnabled,
+                warning: !controller.autostartEnabled && !autostartSupported,
+                action: controller.autostartEnabled
                     ? strings.disableAutoStart
                     : strings.enableAutoStart,
+                onAction: controller.busy ||
+                        (!controller.autostartEnabled && !autostartSupported)
+                    ? null
+                    : () => _run(
+                          context,
+                          controller.autostartEnabled
+                              ? AgentAction.disableAutoStart
+                              : AgentAction.enableAutoStart,
+                        ),
               ),
-            ),
-            children: const [],
+            ],
           ),
-          const SizedBox(height: 16),
-          EdgePanel(
-            title: strings.systemDns,
-            subtitle: systemDnsDetail,
-            actions: OutlinedButton(
-              onPressed: controller.busy ||
-                      (!systemDnsEnabled && !canEnableSystemDns)
-                  ? null
-                  : () => _run(
-                        context,
-                        systemDnsEnabled
-                            ? AgentAction.disableSystemDns
-                            : AgentAction.enableSystemDns,
-                      ),
-              child: Text(
-                systemDnsEnabled
+          const SizedBox(height: 12),
+          EdgeGroup(
+            header: strings.systemDns,
+            children: [
+              _CapabilityRow(
+                state: _systemDnsLabel(systemDnsState, strings),
+                active: controller.systemDnsEnabled,
+                warning: systemDnsState != _SystemDnsState.ready &&
+                    systemDnsState != _SystemDnsState.managed,
+                action: controller.systemDnsEnabled
                     ? strings.disableSystemDns
                     : strings.enableSystemDns,
+                onAction: controller.busy ||
+                        (!controller.systemDnsEnabled && !canEnableSystemDns)
+                    ? null
+                    : () => _run(
+                          context,
+                          controller.systemDnsEnabled
+                              ? AgentAction.disableSystemDns
+                              : AgentAction.enableSystemDns,
+                        ),
               ),
-            ),
-            children: const [],
+            ],
           ),
           if (status?.legacyServiceDetected ?? false) ...[
-            const SizedBox(height: 16),
-            EdgePanel(
-              title: strings.legacyService,
-              subtitle: strings.legacyServiceCopy,
-              actions: OutlinedButton(
-                onPressed: controller.busy
-                    ? null
-                    : () => _run(context, AgentAction.removeLegacyService),
-                child: Text(strings.removeLegacyService),
-              ),
-              children: const [],
+            const SizedBox(height: 12),
+            EdgeGroup(
+              header: strings.legacyService,
+              children: [
+                _CapabilityRow(
+                  state: 'root daemon',
+                  active: false,
+                  warning: true,
+                  action: strings.removeLegacyService,
+                  onAction: controller.busy
+                      ? null
+                      : () => _run(context, AgentAction.removeLegacyService),
+                ),
+              ],
             ),
           ],
-          const SizedBox(height: 16),
-          EdgePanel(
-            title: strings.networkServices,
+          const SizedBox(height: 12),
+          EdgeGroup(
+            header: strings.networkServices,
             children: [
               if ((status?.dnsServices ?? const <DnsServiceStatus>[]).isEmpty)
                 Text(
@@ -172,21 +180,20 @@ class SystemPage extends StatelessWidget {
                     child: Row(
                       children: [
                         SizedBox(
-                          width: 220,
+                          width: 210,
                           child: Text(
-                            '${service.name} (${service.device})',
-                            style: const TextStyle(fontSize: 12.5),
+                            service.name,
                             overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12.5),
                           ),
                         ),
                         SizedBox(
-                          width: 80,
+                          width: 52,
                           child: Text(
-                            service.enabled
-                                ? strings.t('已启用', 'Enabled')
-                                : strings.t('已停用', 'Disabled'),
+                            service.device,
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 11.5,
+                              fontFamily: 'Menlo',
                               color: scheme.onSurfaceVariant,
                             ),
                           ),
@@ -194,14 +201,14 @@ class SystemPage extends StatelessWidget {
                         Expanded(
                           child: Text(
                             service.dnsDescription,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 11.5,
                               fontFamily: 'Menlo',
                               color: service.usesLoopbackDns
                                   ? scheme.primary
                                   : scheme.onSurfaceVariant,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -209,60 +216,49 @@ class SystemPage extends StatelessWidget {
                   ),
             ],
           ),
-          const SizedBox(height: 16),
-          EdgePanel(
-            title: strings.quitApplication,
+          const SizedBox(height: 12),
+          EdgeGroup(
             children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: scheme.error,
-                    side: BorderSide(color: scheme.error.withValues(alpha: 0.5)),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      strings.quit,
+                      style: const TextStyle(fontSize: 12.5),
+                    ),
                   ),
-                  onPressed: controller.busy
-                      ? null
-                      : () async {
-                          final confirmed = await showConfirmDialog(
-                            context,
-                            strings,
-                            AgentAction.quit,
-                          );
-                          if (!confirmed) {
-                            return;
-                          }
-                          final message =
-                              await controller.runAction(AgentAction.quit);
-                          onNotice(message ?? '');
-                          onQuit();
-                        },
-                  child: Text(strings.quitApplication),
-                ),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: scheme.error,
+                      side: BorderSide(
+                        color: scheme.error.withValues(alpha: 0.5),
+                      ),
+                    ),
+                    onPressed: controller.busy
+                        ? null
+                        : () async {
+                            final confirmed = await showConfirmDialog(
+                              context,
+                              strings,
+                              AgentAction.quit,
+                            );
+                            if (!confirmed) {
+                              return;
+                            }
+                            final message =
+                                await controller.runAction(AgentAction.quit);
+                            onNotice(message ?? '');
+                            onQuit();
+                          },
+                    child: Text(strings.quit),
+                  ),
+                ],
               ),
             ],
           ),
         ],
       ),
     );
-  }
-
-  String _systemDnsDetail(EdgeSteerController controller, Strings strings) {
-    if (controller.systemDnsEnabled) {
-      return strings.systemDnsManaged;
-    }
-    if (!controller.configurationValid) {
-      return strings.fixConfigFirst;
-    }
-    if (!controller.listenerSupportsSystemDns) {
-      return strings.systemDnsNeedsPort53;
-    }
-    if (!controller.engineRunning) {
-      return strings.systemDnsNeedsEngine;
-    }
-    if (!(controller.status?.listenerReady ?? false)) {
-      return strings.systemDnsNeedsListener;
-    }
-    return strings.systemDnsReady;
   }
 
   Future<void> _run(BuildContext context, AgentAction action) async {
@@ -273,5 +269,98 @@ class SystemPage extends StatelessWidget {
     }
     final message = await controller.runAction(action);
     onNotice(message ?? '');
+  }
+
+  _SystemDnsState _systemDnsState(
+    EdgeSteerController controller,
+    Strings strings,
+  ) {
+    if (controller.systemDnsEnabled) {
+      return _SystemDnsState.managed;
+    }
+    if (!controller.configurationValid) {
+      return _SystemDnsState.invalidConfig;
+    }
+    if (!controller.listenerSupportsSystemDns) {
+      return _SystemDnsState.needsPort53;
+    }
+    if (!controller.engineRunning) {
+      return _SystemDnsState.needsEngine;
+    }
+    if (!(controller.status?.listenerReady ?? false)) {
+      return _SystemDnsState.needsListener;
+    }
+    return _SystemDnsState.ready;
+  }
+
+  String _systemDnsLabel(_SystemDnsState state, Strings strings) =>
+      switch (state) {
+        _SystemDnsState.managed => strings.managed,
+        _SystemDnsState.ready => strings.ready,
+        _SystemDnsState.needsPort53 => strings.needsPort53,
+        _SystemDnsState.needsEngine => strings.needsEngine,
+        _SystemDnsState.needsListener => strings.needsListener,
+        _SystemDnsState.invalidConfig => strings.invalid,
+      };
+}
+
+enum _SystemDnsState {
+  managed,
+  ready,
+  needsPort53,
+  needsEngine,
+  needsListener,
+  invalidConfig,
+}
+
+/// One capability: state on the left, the single available action on the right.
+class _CapabilityRow extends StatelessWidget {
+  const _CapabilityRow({
+    required this.state,
+    required this.active,
+    required this.action,
+    required this.onAction,
+    this.warning = false,
+  });
+
+  final String state;
+  final bool active;
+  final bool warning;
+  final String action;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: active
+                ? scheme.primary
+                : warning
+                    ? scheme.error
+                    : scheme.outline,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            state,
+            style: TextStyle(
+              fontSize: 12.5,
+              color: warning && !active ? scheme.error : scheme.onSurface,
+            ),
+          ),
+        ),
+        OutlinedButton(
+          onPressed: onAction,
+          child: Text(action),
+        ),
+      ],
+    );
   }
 }

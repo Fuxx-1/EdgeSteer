@@ -47,6 +47,19 @@ macOS 请下载 Release 中对应架构的 `EdgeSteer-*-apple-darwin.dmg`，将 
 
 服务与界面都固定使用 `~/edgesteer.json`（Windows 使用 `%USERPROFILE%\edgesteer.json`），不会从工作目录读取另一份配置。界面覆盖 listener、layer 的 `next` / `fallback`、SRS 规则集、Cloudflare 优选插件和 optimizer。默认是中文暗色界面；语言和黑/白主题位于系统页的下拉框，选择结果同时用于菜单栏标签。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口，设置窗口显示 Agent 管理的 listener 与物理网络服务状态。macOS App 以菜单栏代理方式运行，不显示 Dock 图标；关闭窗口会结束界面进程并释放界面资源，可从菜单栏重新打开。macOS 上，只有点击启用系统 DNS 后才会请求管理员授权；Linux、Windows 可以构建和使用界面配置 DNS 服务，但系统 DNS 仍由对应网络管理器负责。Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
 
+### 用脚本或 Agent 驱动界面
+
+界面只是视图，所有能力都在常驻 Agent 上，因此脚本和 AI Agent 不需要模拟点击或截图：
+
+```sh
+./scripts/edgesteer-ctl.sh status              # 引擎、监听器、系统 DNS、界面状态（JSON）
+./scripts/edgesteer-ctl.sh ui preferred        # 在指定页面打开界面
+./scripts/edgesteer-ctl.sh engine start        # start|stop|restart
+./scripts/edgesteer-ctl.sh config save new.json  # 校验并原子写入，随后热重载
+```
+
+`status` 的 `ui` 字段描述窗口当前状态（页面、语言、风格、配置文件路径与校验结果），因此脚本无需读取像素即可确认界面行为。
+
 ### 先用高端口验证
 
 把 listener 改为 `127.0.0.1:53535`，启动：

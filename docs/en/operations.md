@@ -47,6 +47,19 @@ Outside a packaged App bundle, `./target/release/edgesteer-agent` starts the men
 
 The service and UI both use the fixed `~/edgesteer.json` path (`%USERPROFILE%\edgesteer.json` on Windows), never another working-directory file. The UI covers the listener, resolver-layer `next` / `fallback` links, SRS rule sets, Cloudflare preferred-IP plugins, and the optimizer through structured forms, with an Advanced JSON page for the complete document. It opens in Chinese dark mode; System provides Chinese/English and Dark/Light pick lists, and the choice also drives the menu-bar labels. The menu bar is the primary control surface, while Settings shows the Agent-managed listener, an optional per-user login item, and physical network-service state. CJK and emoji fonts prefer the operating system and use HTTPS-cached fallbacks only when missing. On macOS, the packaged App runs as a menu-bar agent with no Dock entry. Closing Settings terminates the interface process and releases its UI resources; the menu-bar item opens a fresh Settings process when needed. Enabling system DNS requests administrator authorization only after the user selects it. Linux and Windows build and use the UI to configure the DNS service; their network managers remain responsible for system DNS registration. Linux menu-bar support requires GTK 3 and an Ayatana AppIndicator runtime.
 
+### Drive the interface from a script or an agent
+
+The window is only a view; every capability lives in the resident agent, so scripts and AI agents never need to simulate clicks or take screenshots:
+
+```sh
+./scripts/edgesteer-ctl.sh status              # engine, listener, system DNS, UI state (JSON)
+./scripts/edgesteer-ctl.sh ui preferred        # open the window on a given page
+./scripts/edgesteer-ctl.sh engine start        # start|stop|restart
+./scripts/edgesteer-ctl.sh config save new.json  # validate, write atomically, hot reload
+```
+
+The `ui` field of `status` describes the window (page, language, appearance, configuration path and its validation result), so a script can verify interface behaviour without reading pixels.
+
 ### Test on a high port
 
 Set the listener to `127.0.0.1:53535` and start it:

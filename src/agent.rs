@@ -37,7 +37,7 @@ use crate::{
     control::{
         self, AgentCommand, AgentRecord, AgentResponse, AgentStatus, CONTROL_FILE_NAME,
         CONTROL_PROTOCOL, ControlRequest, DnsServiceStatus, LOCK_FILE_NAME,
-        SERVER_RESPONSE_TIMEOUT, UiPreferences,
+        SERVER_RESPONSE_TIMEOUT, UiPage, UiPreferences,
     },
     integration::{self, IntegrationStatus, StartupService},
     tray::{self, TrayController, TrayEvent},
@@ -142,7 +142,7 @@ pub fn start_or_open(options: AgentOptions, open_ui: bool) -> Result<(), String>
                 state_dir: state_dir.clone(),
             }
             .request(if open_ui {
-                AgentCommand::OpenUi
+                AgentCommand::OpenUi { page: None }
             } else {
                 AgentCommand::Status
             })?;
@@ -191,7 +191,7 @@ fn run_agent(
     let control_server = ControlServer::start(listener, record.token.clone(), request_sender)?;
     let mut agent = Agent::new(options, state_dir, lock, control_server)?;
     if open_ui {
-        let _ = agent.open_ui();
+        let _ = agent.open_ui(None);
     }
     agent.refresh_status();
     #[cfg(target_os = "macos")]
@@ -257,6 +257,8 @@ struct Agent {
     /// The Flutter interface process. Closing the window ends this process
     /// only; the agent and the DNS engine keep running.
     ui_child: Option<Child>,
+    /// The page the running window was opened on, when the agent chose it.
+    ui_page: Option<UiPage>,
     exit_requested: bool,
 }
 
@@ -279,6 +281,7 @@ impl Agent {
             status: AgentStatus::unavailable("Configuration has not been checked"),
             last_status_refresh: Instant::now() - STATUS_REFRESH_INTERVAL,
             ui_child: None,
+            ui_page: None,
             exit_requested: false,
         };
 
@@ -297,7 +300,7 @@ impl Agent {
 
     fn handle_tray_event(&mut self, event: TrayEvent) -> AgentResponse {
         let command = match event {
-            TrayEvent::Open => AgentCommand::OpenUi,
+            TrayEvent::Open => AgentCommand::OpenUi { page: None },
             TrayEvent::ToggleEngine => {
                 if self.status.engine_running {
                     AgentCommand::StopEngine
@@ -329,7 +332,7 @@ impl Agent {
         let mut preferences = None;
         let result = match command {
             AgentCommand::Status => Ok("EdgeSteer Agent is running".to_owned()),
-            AgentCommand::OpenUi => self.open_ui(),
+            AgentCommand::OpenUi { page } => self.open_ui(page),
             AgentCommand::StartEngine => self.start_engine(),
             AgentCommand::StopEngine => self.stop_engine_with_dns_restore(),
             AgentCommand::RestartEngine => self.restart_engine(),
@@ -435,6 +438,7 @@ impl Agent {
     }
 
     fn stop_ui(&mut self) {
+        self.ui_page = None;
         let Some(mut child) = self.ui_child.take() else {
             return;
         };
@@ -466,7 +470,7 @@ impl Agent {
     /// Opens the Flutter interface. The interface is a separate process: it
     /// owns the window, and the agent keeps the DNS engine alive after that
     /// process exits.
-    fn open_ui(&mut self) -> Result<String, String> {
+    fn open_ui(&mut self, page: Option<UiPage>) -> Result<String, String> {
         let ui_is_running = self
             .ui_child
             .as_mut()
@@ -475,10 +479,18 @@ impl Agent {
             return Ok("EdgeSteer window is already open".to_owned());
         }
         self.stop_ui();
-        let child = Command::new(&self.options.ui_executable)
+        let mut command = Command::new(&self.options.ui_executable);
+        if let Some(page) = page {
+            // The interface reads its initial page from the environment. It is
+            // the same switch `EDGESTEER_UI_PAGE` uses for verification, so an
+            // agent can open a page without any window automation.
+            command.env("EDGESTEER_UI_PAGE", page.as_str());
+        }
+        let child = command
             .spawn()
             .map_err(|error| format!("open EdgeSteer window: {error}"))?;
         self.ui_child = Some(child);
+        self.ui_page = page;
         Ok("Opening EdgeSteer".to_owned())
     }
 
@@ -504,7 +516,28 @@ impl Agent {
                 .is_some_and(|child| matches!(child.try_wait(), Ok(None))),
             self.options.app_bundle.is_some(),
         );
+        self.status.ui = self.ui_snapshot();
         self.last_status_refresh = Instant::now();
+    }
+
+    /// Describes the window for the agent-facing status reply. Reading the same
+    /// facts the window shows keeps a script from needing screenshots.
+    fn ui_snapshot(&self) -> Option<control::UiSnapshot> {
+        if !self.status.ui_running {
+            return None;
+        }
+        let preferences = UiPreferences::load(&control::ui_preferences_path()).unwrap_or_default();
+        let snapshot = control::read_config_snapshot(&self.options.config_path).ok()?;
+        let configuration_error = control::validate_config_text(&snapshot.contents).err();
+        Some(control::UiSnapshot {
+            running: true,
+            page: self.ui_page,
+            language: preferences.language,
+            appearance: preferences.appearance,
+            configuration_path: snapshot.path,
+            configuration_exists: snapshot.exists,
+            configuration_error,
+        })
     }
 
     fn sync_tray(&mut self) {
@@ -573,6 +606,7 @@ fn status_from(
         autostart_supported,
         dns_services,
         ui_running,
+        ui: None,
     }
 }
 
@@ -1094,6 +1128,7 @@ mod tests {
             autostart_supported: true,
             dns_services: Vec::new(),
             ui_running: false,
+            ui: None,
         };
         assert!(tray_presentation(&status, TrayLanguage::Chinese).system_dns_action_enabled);
 

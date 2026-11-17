@@ -191,7 +191,7 @@ class EdgeSteerController extends ChangeNotifier {
       return strings.operationInProgress;
     }
     if (action.requiresValidConfiguration && !configurationValid) {
-      return strings.fixConfigFirst;
+      return strings.invalid;
     }
     busy = true;
     notifyListeners();

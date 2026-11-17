@@ -49,9 +49,14 @@ class MainFlutterWindow: NSWindow {
       width: max(900, min(preferred.width, visible.width - 80)),
       height: max(620, min(preferred.height, visible.height - 80))
     )
+    // Clamp the origin into the visible frame. A stale saved frame or a display
+    // change can otherwise place the window partly or fully off-screen, where
+    // the window server never shows it and the app looks like it failed to open.
     let origin = NSPoint(
-      x: visible.midX - size.width / 2,
-      y: visible.midY - size.height / 2
+      x: max(visible.minX, min(visible.midX - size.width / 2,
+                            visible.maxX - size.width)),
+      y: max(visible.minY, min(visible.midY - size.height / 2,
+                            visible.maxY - size.height))
     )
     return NSRect(origin: origin, size: size)
   }
