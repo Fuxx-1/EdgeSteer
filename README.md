@@ -58,7 +58,7 @@ $env:RUST_LOG = "info"
 
 ## Flutter 界面与菜单栏 Agent
 
-macOS 推荐下载 Release 中对应架构的 `EdgeSteer-*-apple-darwin.dmg`，将 `EdgeSteer.app` 拖到“应用程序”。DNS 引擎由 App bundle 管理；监听 53 端口时，App 会按需启动同一 bundle 内的隐藏授权 helper，不会安装独立的 `edgesteer` 命令行程序或常驻 LaunchDaemon。若机器上有旧版 root 服务，可在系统页点击“移除旧版服务”并授权清理。
+macOS 推荐下载 Release 中对应架构的 `EdgeSteer-*-apple-darwin.dmg`，将 `EdgeSteer.app` 拖到“应用程序”。DNS 引擎由 App bundle 管理；监听 53 端口时，App 会按需启动同一 bundle 内的隐藏授权 helper，不会安装独立的 `edgesteer` 命令行程序或常驻 LaunchDaemon。若机器上有旧版 root 服务，可在状态页点击“移除”并授权清理。
 
 App 由三个协作进程组成，职责互不重叠：
 
@@ -70,7 +70,7 @@ App 由三个协作进程组成，职责互不重叠：
 
 配置界面用 Flutter 重写，通过本机受限控制通道向 Agent 发出命令，自身不持有 DNS runtime，也不直接读写配置文件。保存前由 Agent 用同一套严格校验验证整份文档，通过后原子替换文件并热重载引擎。
 
-界面是五个平级入口：**状态**（引擎、监听器、系统 DNS 状态条，以及偏好、登录启动、系统 DNS、网络服务与退出）、**解析**、**规则集**、**优选**、**JSON**。界面风格可选择跟随系统、深色或浅色，默认跟随系统。解析层表单包含 `next` / `fallback`、关键词/SRS 匹配、DoH/DoT/local 上游；优选页包含候选 CIDR 与兼容性主机；JSON 视图用于批量修改完整文档。
+界面是五个平级入口：**状态**、**解析**、**规则集**、**优选**、**JSON**。状态页承载运行状态条（引擎、监听器、系统 DNS、登录启动）与机器级设置（偏好、登录启动、系统 DNS、网络服务、退出）。界面风格支持**跟随系统**、深色、浅色，默认跟随系统，macOS 切换外观时窗口即时跟随。解析层表单包含 `next` / `fallback`、关键词/SRS 匹配、DoH/DoT/local 上游；优选页包含候选 CIDR 与兼容性主机；JSON 页用于批量修改完整文档。
 
 ```sh
 # 界面依赖 Flutter 3.35 或更新版本
@@ -79,13 +79,18 @@ App 由三个协作进程组成，职责互不重叠：
 # Rust 侧：Agent、特权 helper 和命令行
 ./scripts/build-release.sh --features gui
 
-# 组合成一个 App bundle（含嵌套界面 bundle）
-./packaging/macos/build-app.sh aarch64-apple-darwin 1.0.4 /tmp/EdgeSteer.app
+# 组合成一个 App bundle，再打成磁盘镜像
+RUST_BIN_DIR=target/release \
+  ./packaging/macos/build-dmg.sh aarch64-apple-darwin 1.1.0 dist/EdgeSteer.dmg
 ```
 
-服务与界面固定使用 `~/edgesteer.json`（Windows 为 `%USERPROFILE%\edgesteer.json`）。界面默认中文暗色模式，语言与黑白主题位于系统页，选择结果会同时用于菜单栏标签。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口。macOS App 是菜单栏代理，不显示 Dock 图标；从菜单栏可重新打开界面窗口。macOS 上可启用“登录时打开”，它注册的是当前 App 的用户级 LaunchAgent；启用系统 DNS 时才请求管理员授权。
+`RUST_BIN_DIR` 用于本机构建：直接在 host target 下编译时，二进制位于 `target/release/`，而脚本默认按 `target/<triple>/release/` 查找。CI 使用 `--target` 构建，无需该变量。
 
-系统 DNS 只会接管原本使用 DHCP 自动 DNS 的物理服务，并保存一份“由 EdgeSteer 接管”的服务清单，不保存或回放旧 DNS 地址。关闭界面窗口只会结束窗口进程，Agent 与 DNS 引擎继续在菜单栏运行；只有从菜单栏或系统页明确选择“退出 EdgeSteer”后，Agent 才会先恢复这份清单到自动 DNS，再停止引擎。恢复失败时 App 保持运行，避免留下无法解析的 `127.0.0.1`。手工显式 DNS 不会被覆盖。Linux、Windows 可以构建并使用界面配置 DNS 服务，系统 DNS 注册仍由各自网络管理器处理；Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
+服务与界面固定使用 `~/edgesteer.json`（Windows 为 `%USERPROFILE%\edgesteer.json`）。界面默认中文、跟随系统外观；语言与风格在状态页的“偏好”中设置，风格选择会同时影响菜单栏显示。菜单栏是启动、停止、系统 DNS、登录启动和退出的主入口。macOS App 是菜单栏代理，不显示 Dock 图标；从菜单栏可重新打开界面窗口。macOS 上可启用“登录时打开”，它注册的是当前 App 的用户级 LaunchAgent；启用系统 DNS 时才请求管理员授权。
+
+系统 DNS 只会接管原本使用 DHCP 自动 DNS 的物理服务，并保存一份“由 EdgeSteer 接管”的服务清单，不保存或回放旧 DNS 地址。关闭界面窗口只会结束窗口进程，Agent 与 DNS 引擎继续在菜单栏运行；只有从菜单栏或状态页明确选择“退出 EdgeSteer”后，Agent 才会先恢复这份清单到自动 DNS，再停止引擎。恢复失败时 App 保持运行，避免留下无法解析的 `127.0.0.1`。手工显式 DNS 不会被覆盖。
+
+**平台范围**：Flutter 界面当前只实现 macOS（`ui/macos/`），发布产物中的 Linux 与 Windows 归档只包含命令行与 Agent，不含图形界面。这两个平台的系统 DNS 注册由各自网络管理器负责；Linux 菜单栏需要 GTK 3 与 Ayatana AppIndicator 运行时。
 
 首次运行建议使用高端口，不要立即改系统 DNS：
 

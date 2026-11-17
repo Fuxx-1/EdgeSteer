@@ -65,7 +65,7 @@ cargo run --release -- --check-config
 - `v1.2.3-alpha.1`、`v1.2.3-beta.1`、`v1.2.3-rc.1` 等带连字符的版本创建 pre-release。
 - 不符合语义版本的 tag 会在构建前失败。
 
-发布流程会为 Linux、macOS、Windows 的 x86_64 与 ARM64 构建产物。Linux、Windows 发布包含 CLI 和 UI 的归档；macOS 发布按架构区分的未签名 `.dmg`，内含可拖到“应用程序”的 `EdgeSteer.app`。该 App bundle 管理内置 DNS 引擎（53 端口需要时使用隐藏授权 helper），不包含独立的命令行服务。
+发布流程会为 Linux、macOS、Windows 的 x86_64 与 ARM64 构建产物。Linux、Windows 发布包含 CLI 与 Agent 的归档（不含图形界面）；macOS 发布按架构区分的未签名 `.dmg`，内含可拖到“应用程序”的 `EdgeSteer.app`。该 App bundle 管理内置 DNS 引擎（53 端口需要时使用隐藏授权 helper），不包含独立的命令行服务。
 
 示例：
 
