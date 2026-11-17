@@ -212,13 +212,17 @@ class _ResolverPageState extends State<ResolverPage>
     final kind = LayerKind.fromWire(layer?['type'] as String?);
     final next = layer?['next'] as String?;
     final fallback = layer?['fallback'] as String?;
-    final links = [
-      if (next != null && next.isNotEmpty) '→ $next',
-      if (fallback != null && fallback.isNotEmpty) '↯ $fallback',
+    // Two links on one line truncated both of them, so each gets its own row.
+    final lines = [
+      if (next != null && next.isNotEmpty)
+        (label: strings.next, value: next),
+      if (fallback != null && fallback.isNotEmpty)
+        (label: strings.fallback, value: fallback),
     ];
     return ListEntry(
       title: tag.isEmpty ? '—' : tag,
-      subtitle: links.isEmpty ? kind.wire : links.join('  '),
+      subtitle: kind.wire,
+      lines: lines,
       badge: document.entry == tag ? strings.entry.toUpperCase() : null,
     );
   }

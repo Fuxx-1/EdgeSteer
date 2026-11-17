@@ -17,15 +17,16 @@ class Strings {
 
   // Navigation -----------------------------------------------------------------
 
+  // Top-level sections. Status also carries the machine-level controls that
+  // used to live in a separate System page: they describe the same runtime.
   String get navStatus => t('状态', 'Status');
-  String get navConfig => t('配置', 'Config');
-  String get navSystem => t('系统', 'System');
+  String get navResolvers => t('解析', 'Resolvers');
+  String get navRuleSets => t('规则集', 'Rule sets');
+  String get navPreferred => t('优选', 'Preferred');
+  String get navJson => 'JSON';
 
-  // Sections inside the configuration document.
-  String get sectionResolvers => t('解析', 'Resolvers');
-  String get sectionRuleSets => t('规则集', 'Rule sets');
-  String get sectionPreferred => t('优选', 'Preferred');
-  String get sectionJson => 'JSON';
+  // Runtime and system sections on the status page.
+  String get preferences => t('偏好', 'Preferences');
 
   // Shared actions -------------------------------------------------------------
 
@@ -47,13 +48,13 @@ class Strings {
   String get systemDns => t('系统 DNS', 'System DNS');
   String get running => t('运行中', 'Running');
   String get stopped => t('已停止', 'Stopped');
+  String get autostart => t('登录启动', 'At login');
   String get managed => t('已接管', 'Managed');
   String get notManaged => t('未接管', 'Not managed');
   String get startEngine => t('启动', 'Start');
   String get stopEngine => t('停止', 'Stop');
   String get restartEngine => t('重启', 'Restart');
   String get refresh => t('刷新', 'Refresh');
-  String get chain => t('解析链', 'Chain');
   String get noLayers => t('还没有解析层', 'No layers yet');
   String get entryMissing => t('入口层不存在', 'Entry layer is missing');
 
@@ -119,9 +120,9 @@ class Strings {
 
   // System ---------------------------------------------------------------------
 
-  String get application => t('应用', 'Application');
   String get language => t('语言', 'Language');
   String get appearance => t('风格', 'Appearance');
+  String get followSystem => t('跟随系统', 'Follow system');
   String get dark => t('深色', 'Dark');
   String get light => t('浅色', 'Light');
   String get openAtLogin => t('登录启动', 'Open at login');

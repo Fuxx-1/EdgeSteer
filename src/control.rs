@@ -279,13 +279,15 @@ impl UiPage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AppearanceMode {
+    /// Follow the operating system appearance.
+    System,
     Dark,
     Light,
 }
 
 impl Default for AppearanceMode {
     fn default() -> Self {
-        Self::Dark
+        Self::System
     }
 }
 
@@ -302,7 +304,7 @@ impl Default for UiPreferences {
     fn default() -> Self {
         Self {
             language: Language::Chinese,
-            appearance: AppearanceMode::Dark,
+            appearance: AppearanceMode::System,
         }
     }
 }
@@ -446,10 +448,41 @@ mod tests {
     }
 
     #[test]
-    fn preferences_default_to_chinese_and_dark() {
+    fn preferences_default_to_chinese_and_following_the_system() {
         let preferences = UiPreferences::default();
         assert_eq!(preferences.language, Language::Chinese);
-        assert_eq!(preferences.appearance, AppearanceMode::Dark);
+        assert_eq!(preferences.appearance, AppearanceMode::System);
+    }
+
+    #[test]
+    fn an_existing_preferences_file_without_system_mode_still_loads() {
+        // Older files only ever wrote `dark` or `light`; the new `system` value
+        // must be additive, not a breaking change.
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("ui.json");
+        std::fs::write(&path, r#"{"language":"english","appearance":"light"}"#)
+            .expect("write preferences");
+
+        let loaded = UiPreferences::load(&path).expect("load preferences");
+        assert_eq!(loaded.appearance, AppearanceMode::Light);
+        assert_eq!(loaded.language, Language::English);
+    }
+
+    #[test]
+    fn appearance_modes_round_trip() {
+        for mode in [
+            AppearanceMode::System,
+            AppearanceMode::Dark,
+            AppearanceMode::Light,
+        ] {
+            let encoded = serde_json::to_string(&mode).expect("encode mode");
+            let decoded: AppearanceMode = serde_json::from_str(&encoded).expect("decode mode");
+            assert_eq!(decoded, mode);
+        }
+        assert_eq!(
+            serde_json::to_string(&AppearanceMode::System).unwrap(),
+            "\"system\""
+        );
     }
 
     #[test]

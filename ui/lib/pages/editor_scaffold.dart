@@ -21,12 +21,16 @@ class ListEntry {
     required this.subtitle,
     this.badge,
     this.dimmed = false,
+    this.lines = const [],
   });
 
   final String title;
   final String subtitle;
   final String? badge;
   final bool dimmed;
+
+  /// Extra label/value rows below the subtitle.
+  final List<({String label, String value})> lines;
 }
 
 /// A structured editor page: header bar, master list, detail form.
@@ -92,6 +96,7 @@ class EditorScaffold extends StatelessWidget {
                       subtitle: entry.subtitle,
                       badge: entry.badge,
                       dimmed: entry.dimmed,
+                      lines: entry.lines,
                       selected: isSelected,
                       onTap: () => onSelect(index),
                     );

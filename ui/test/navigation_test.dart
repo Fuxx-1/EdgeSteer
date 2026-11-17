@@ -50,77 +50,53 @@ Future<void> pumpShell(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('top bar has exactly three sections', (tester) async {
+  testWidgets('top bar is one flat row of five sections', (tester) async {
     await pumpShell(tester);
-    expect(find.text('状态'), findsOneWidget);
-    expect(find.text('配置'), findsOneWidget);
-    expect(find.text('系统'), findsOneWidget);
 
-    // The views that used to be top-level tabs must not be in the top bar.
-    expect(find.text('规则集'), findsNothing);
-    expect(find.text('优选'), findsNothing);
-    expect(find.text('JSON'), findsNothing);
+    for (final label in ['状态', '解析', '规则集', '优选', 'JSON']) {
+      expect(find.text(label), findsWidgets, reason: 'missing tab $label');
+    }
+    // There is no configuration wrapper left to click through.
+    expect(find.text('配置'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('config section exposes four views, defaulting to resolvers',
+  testWidgets('status page merges runtime and system controls',
       (tester) async {
     await pumpShell(tester);
-    await tester.tap(find.text('配置'));
-    await tester.pump();
 
-    expect(find.text('解析'), findsWidgets);
-    // A view label can also appear as a list heading inside the view itself.
-    expect(find.text('规则集'), findsWidgets);
-    expect(find.text('优选'), findsWidgets);
-    expect(find.text('JSON'), findsWidgets);
-    // Resolver detail form is shown first.
-    expect(find.text('监听'), findsOneWidget);
+    // Status strip.
+    expect(find.text('DNS 引擎'), findsOneWidget);
+    expect(find.text('系统 DNS'), findsWidgets);
+    // Merged system controls.
+    expect(find.text('偏好'), findsOneWidget);
+    expect(find.text('登录启动'), findsWidgets);
+    // The resolver chain is gone from this page.
+    expect(find.text('解析链'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('switching config views swaps the editor', (tester) async {
+  testWidgets('each tab opens its own page directly', (tester) async {
     await pumpShell(tester);
-    await tester.tap(find.text('配置'));
-    await tester.pump();
 
-    await tester.tap(find.text('JSON'));
+    await tester.tap(find.text('解析').first);
+    await tester.pump();
+    expect(find.text('监听'), findsOneWidget);
+
+    await tester.tap(find.text('JSON').first);
     await tester.pump();
     expect(find.text('/tmp/e.json'), findsOneWidget);
 
-    await tester.tap(find.text('规则集'));
+    await tester.tap(find.text('规则集').first);
     await tester.pump();
     expect(find.text('监听'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('every page name the agent can send is accepted', (tester) async {
-    // `config` opens the configuration section on its first view. The other
-    // names are unchanged from when each view had its own top-level tab.
-    for (final name in [
-      'status',
-      'config',
-      'resolvers',
-      'ruleSets',
-      'preferred',
-      'json',
-      'system',
-    ]) {
-      await pumpShell(tester);
-      // The shell reads the environment once at startup, so drive the sections
-      // directly instead: every section must render for every accepted name.
-      expect(tester.takeException(), isNull, reason: name);
-    }
-  });
-
-  testWidgets('status section links into the resolver view', (tester) async {
+  testWidgets('legacy page names still land on a page', (tester) async {
+    // `config` and `system` predate the flat tabs; the shell maps them onto a
+    // real page so older scripts do not break.
     await pumpShell(tester);
-    // Starts on status.
-    expect(find.text('解析链'), findsOneWidget);
-    await tester.tap(find.text('解析'));
-    await tester.pump();
-    // Now inside the config section on the resolver view.
-    expect(find.text('监听'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

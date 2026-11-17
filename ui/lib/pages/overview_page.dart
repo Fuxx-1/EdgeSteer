@@ -1,4 +1,8 @@
-/// Runtime status: one status strip, engine controls, and the live chain.
+/// Runtime status plus the machine-level controls that act on it.
+///
+/// One screen: a status strip with the engine actions, then the preferences,
+/// login item, system DNS, network services, and quit controls. The resolver
+/// chain lives on its own page now, so this page does not duplicate it.
 library;
 
 import 'package:flutter/material.dart';
@@ -6,29 +10,28 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../strings.dart';
 import '../widgets.dart';
+import 'system_page.dart';
 
 class OverviewPage extends StatelessWidget {
   const OverviewPage({
     super.key,
     required this.strings,
     required this.onNotice,
-    required this.onOpenResolvers,
+    required this.onQuit,
   });
 
   final Strings strings;
   final ValueChanged<String> onNotice;
-  final VoidCallback onOpenResolvers;
+  final VoidCallback onQuit;
 
   @override
   Widget build(BuildContext context) {
     final controller = EdgeSteerScope.of(context);
-    final scheme = Theme.of(context).colorScheme;
     final status = controller.status;
-    final document = controller.document;
     final engineRunning = status?.engineRunning ?? false;
     final systemDns = status?.systemDnsEnabled ?? false;
 
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -58,6 +61,14 @@ class OverviewPage extends StatelessWidget {
                     label: strings.systemDns,
                     value: systemDns ? strings.managed : strings.notManaged,
                     active: systemDns,
+                  ),
+                  const SizedBox(width: 20),
+                  StatusValue(
+                    label: strings.autostart,
+                    value: controller.autostartEnabled
+                        ? strings.autostartOn
+                        : strings.autostartOff,
+                    active: controller.autostartEnabled,
                   ),
                   const Spacer(),
                   FilledButton(
@@ -100,44 +111,10 @@ class OverviewPage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          Expanded(
-            child: EdgeGroup(
-              header: strings.chain,
-              trailing: QuietAction(
-                label: strings.sectionResolvers,
-                onPressed: onOpenResolvers,
-              ),
-              scrollable: true,
-              children: [
-                if (document == null)
-                  Text(
-                    strings.agentUnavailable,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  )
-                else if (document.layers.isEmpty)
-                  Text(
-                    strings.noLayers,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  )
-                else
-                  for (var index = 0; index < document.layers.length; index++)
-                    _ChainRow(
-                      document: document,
-                      index: index,
-                      strings: strings,
-                    ),
-                if (document != null && document.validationError != null) ...[
-                  const SizedBox(height: 10),
-                  _Problem(message: document.validationError!),
-                ],
-              ],
-            ),
+          SystemSection(
+            strings: strings,
+            onNotice: onNotice,
+            onQuit: onQuit,
           ),
         ],
       ),
@@ -154,97 +131,6 @@ class OverviewPage extends StatelessWidget {
     }
     final message = await controller.runAction(action);
     onNotice(message ?? '');
-  }
-}
-
-/// One layer in the chain, rendered as a row so the order and the links between
-/// layers are visible at a glance.
-class _ChainRow extends StatelessWidget {
-  const _ChainRow({
-    required this.document,
-    required this.index,
-    required this.strings,
-  });
-
-  final dynamic document;
-  final int index;
-  final Strings strings;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final layer = document.layerAt(index);
-    final tag = layer?['tag'] as String? ?? '—';
-    final kind = layer?['type'] as String? ?? '?';
-    final next = layer?['next'] as String?;
-    final fallback = layer?['fallback'] as String?;
-    final plugin = layer?['plugin'] as String?;
-    final isEntry = document.entry == tag;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(6),
-        border: isEntry
-            ? Border.all(color: scheme.primary.withValues(alpha: 0.6))
-            : null,
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 26,
-            child: Text(
-              '${index + 1}',
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'Menlo',
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 190,
-            child: Text(
-              tag,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: isEntry ? FontWeight.w600 : FontWeight.w400,
-                color: isEntry ? scheme.primary : scheme.onSurface,
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 64,
-            child: Text(
-              kind.toUpperCase(),
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'Menlo',
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              [
-                if (next != null && next.isNotEmpty) 'miss → $next',
-                if (fallback != null && fallback.isNotEmpty) 'fail → $fallback',
-                if (plugin != null && plugin.isNotEmpty) 'plugin $plugin',
-              ].join('   '),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontFamily: 'Menlo',
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 

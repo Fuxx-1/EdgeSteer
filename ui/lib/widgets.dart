@@ -394,6 +394,7 @@ class MasterListItem extends StatelessWidget {
     required this.onTap,
     this.badge,
     this.dimmed = false,
+    this.lines = const [],
   });
 
   final String title;
@@ -402,6 +403,10 @@ class MasterListItem extends StatelessWidget {
   final VoidCallback onTap;
   final String? badge;
   final bool dimmed;
+
+  /// Extra label/value lines below the subtitle. Each becomes its own row so
+  /// two links never share one line and get truncated away.
+  final List<({String label, String value})> lines;
 
   @override
   Widget build(BuildContext context) {
@@ -438,6 +443,38 @@ class MasterListItem extends StatelessWidget {
                       color: scheme.onSurfaceVariant,
                     ),
                   ),
+                  for (final line in lines)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 52,
+                            child: Text(
+                              line.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              line.value,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontFamily: 'Menlo',
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),

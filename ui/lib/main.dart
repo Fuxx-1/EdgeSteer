@@ -10,13 +10,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'agent_client.dart';
 import 'app_state.dart';
 import 'pages/cloudflare_page.dart';
 import 'pages/json_page.dart';
 import 'pages/overview_page.dart';
 import 'pages/resolver_page.dart';
 import 'pages/rules_page.dart';
-import 'pages/system_page.dart';
 import 'strings.dart';
 import 'theme.dart';
 import 'window_controls.dart';
@@ -53,10 +53,20 @@ class _EdgeSteerAppState extends State<EdgeSteerApp> {
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
+        final appearance = _controller.preferences.appearanceMode;
         return MaterialApp(
           title: 'EdgeSteer',
           debugShowCheckedModeBanner: false,
-          theme: buildTheme(dark: _controller.preferences.isDark),
+          // `system` resolves against the platform brightness. Driving this
+          // through `themeMode` (instead of picking one theme ourselves) lets
+          // MaterialApp follow the OS when it changes while we are running.
+          theme: buildTheme(dark: false),
+          darkTheme: buildTheme(dark: true),
+          themeMode: switch (appearance) {
+            AppearanceMode.system => ThemeMode.system,
+            AppearanceMode.dark => ThemeMode.dark,
+            AppearanceMode.light => ThemeMode.light,
+          },
           home: EdgeSteerScope(
             controller: _controller,
             child: EdgeSteerShell(strings: _controller.strings),
@@ -67,13 +77,10 @@ class _EdgeSteerAppState extends State<EdgeSteerApp> {
   }
 }
 
-/// Top-level sections. Configuration is one section with four views inside it,
-/// because resolvers, rule sets, preferred plugins, and the raw JSON all edit
-/// the same document.
-enum _Section { status, config, system }
-
-/// Views inside the configuration section.
-enum _ConfigView { resolvers, ruleSets, preferred, json }
+/// Top-level sections. Each is one click from anywhere: the document editors are
+/// siblings rather than a sub-menu inside a configuration section, because a
+/// two-level tab bar made the common editing path cost an extra click.
+enum _Section { status, resolvers, ruleSets, preferred, json }
 
 class EdgeSteerShell extends StatefulWidget {
   const EdgeSteerShell({super.key, required this.strings});
@@ -86,36 +93,30 @@ class EdgeSteerShell extends StatefulWidget {
 
 class _EdgeSteerShellState extends State<EdgeSteerShell> {
   late _Section _section;
-  late _ConfigView _configView;
   bool _noticeShown = false;
 
   @override
   void initState() {
     super.initState();
-    final requested = _requestedPage();
-    _section = _sectionFor(requested);
-    _configView = _configViewFor(requested);
+    _section = _sectionFor(_requestedPage());
   }
 
   /// `EDGESTEER_UI_PAGE=<name>` opens a specific page. Used by verification
   /// scripts and by agents driving the packaged interface; normal launches open
-  /// the status section. The accepted names are unchanged from when every view
-  /// had its own top-level tab, so existing scripts keep working.
+  /// the status page.
   static String? _requestedPage() =>
       Platform.environment['EDGESTEER_UI_PAGE'];
 
   static _Section _sectionFor(String? requested) => switch (requested) {
-        'system' => _Section.system,
-        'config' || 'resolvers' || 'ruleSets' || 'preferred' || 'json' =>
-          _Section.config,
+        'resolvers' => _Section.resolvers,
+        'ruleSets' => _Section.ruleSets,
+        'preferred' => _Section.preferred,
+        'json' => _Section.json,
+        // `config` and `system` predate the flat tabs. Keep accepting them so
+        // existing scripts and menu-bar shortcuts still land somewhere useful.
+        'config' => _Section.resolvers,
+        'system' => _Section.status,
         _ => _Section.status,
-      };
-
-  static _ConfigView _configViewFor(String? requested) => switch (requested) {
-        'ruleSets' => _ConfigView.ruleSets,
-        'preferred' => _ConfigView.preferred,
-        'json' => _ConfigView.json,
-        _ => _ConfigView.resolvers,
       };
 
   @override
@@ -155,45 +156,13 @@ class _EdgeSteerShellState extends State<EdgeSteerShell> {
       _Section.status => OverviewPage(
           strings: strings,
           onNotice: notice,
-          onOpenResolvers: () => setState(() {
-            _section = _Section.config;
-            _configView = _ConfigView.resolvers;
-          }),
-        ),
-      _Section.config => _buildConfig(strings, notice),
-      _Section.system => SystemPage(
-          strings: strings,
-          onNotice: notice,
           onQuit: () => exit(0),
         ),
+      _Section.resolvers => ResolverPage(strings: strings, onNotice: notice),
+      _Section.ruleSets => RulesPage(strings: strings, onNotice: notice),
+      _Section.preferred => CloudflarePage(strings: strings, onNotice: notice),
+      _Section.json => JsonPage(strings: strings, onNotice: notice),
     };
-  }
-
-  /// One document, four views. Switching a view must not lose unsaved edits, so
-  /// the views are built on demand from the shared document rather than kept
-  /// alive with their own copies.
-  Widget _buildConfig(Strings strings, ValueChanged<String> notice) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _ConfigTabs(
-          view: _configView,
-          strings: strings,
-          onSelect: (view) => setState(() => _configView = view),
-        ),
-        Expanded(
-          child: switch (_configView) {
-            _ConfigView.resolvers =>
-              ResolverPage(strings: strings, onNotice: notice),
-            _ConfigView.ruleSets =>
-              RulesPage(strings: strings, onNotice: notice),
-            _ConfigView.preferred =>
-              CloudflarePage(strings: strings, onNotice: notice),
-            _ConfigView.json => JsonPage(strings: strings, onNotice: notice),
-          },
-        ),
-      ],
-    );
   }
 
   @override
@@ -276,8 +245,10 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 16),
           for (final entry in <(_Section, String)>[
             (_Section.status, strings.navStatus),
-            (_Section.config, strings.navConfig),
-            (_Section.system, strings.navSystem),
+            (_Section.resolvers, strings.navResolvers),
+            (_Section.ruleSets, strings.navRuleSets),
+            (_Section.preferred, strings.navPreferred),
+            (_Section.json, strings.navJson),
           ]) ...[
             _NavButton(
               label: entry.$2,
@@ -395,88 +366,6 @@ class _NavButton extends StatelessWidget {
         style: TextStyle(
           fontSize: 12.5,
           fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-        ),
-      ),
-    );
-  }
-}
-
-/// Segmented control for the views inside the configuration section.
-///
-/// These are not navigation: all four edit the same document, so they read as a
-/// mode switch under the section title rather than as more tabs competing with
-/// the top bar.
-class _ConfigTabs extends StatelessWidget {
-  const _ConfigTabs({
-    required this.view,
-    required this.strings,
-    required this.onSelect,
-  });
-
-  final _ConfigView view;
-  final Strings strings;
-  final ValueChanged<_ConfigView> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final entries = <(_ConfigView, String)>[
-      (_ConfigView.resolvers, strings.sectionResolvers),
-      (_ConfigView.ruleSets, strings.sectionRuleSets),
-      (_ConfigView.preferred, strings.sectionPreferred),
-      (_ConfigView.json, strings.sectionJson),
-    ];
-
-    return Container(
-      height: 34,
-      color: scheme.surfaceContainerLow,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      child: Row(
-        children: [
-          for (final entry in entries) ...[
-            _Segment(
-              label: entry.$2,
-              selected: view == entry.$1,
-              onTap: () => onSelect(entry.$1),
-            ),
-            const SizedBox(width: 2),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _Segment extends StatelessWidget {
-  const _Segment({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(5),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: selected ? scheme.primary.withValues(alpha: 0.14) : null,
-          borderRadius: BorderRadius.circular(5),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-            color: selected ? scheme.primary : scheme.onSurfaceVariant,
-          ),
         ),
       ),
     );

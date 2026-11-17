@@ -30,7 +30,7 @@ Copy-Item config.example.json "$env:USERPROFILE\edgesteer.json"
 
 macOS 请下载 Release 中对应架构的 `EdgeSteer-*-apple-darwin.dmg`，将 `EdgeSteer.app` 拖到“应用程序”后打开。磁盘镜像把界面与 DNS 引擎放在同一个 App bundle 内；监听 53 端口时会按需启动同 bundle 的隐藏授权 helper，不会安装 `edgesteer` 命令行守护进程。若检测到旧版 root 服务，可在设置页点击“移除旧版命令行服务”并授权清理。
 
-界面只有三个顶层入口：状态、配置、系统。配置下的解析层、规则集、优选、JSON 是同一份文档的四个视图，因此并列在同一页而不是各占一个顶层标签。界面使用 [Flutter](https://flutter.dev) 构建，是可释放的配置窗口。轻量 EdgeSteer Agent 持有菜单栏、DNS 引擎、系统 DNS 与登录启动；窗口通过受限的本机控制通道向 Agent 发出命令，自身既不持有 DNS runtime，也不直接读写配置文件：读取、校验和保存都由 Agent 完成，保存前调用与 DNS 服务相同的严格校验，并以原子替换写入，避免 watcher 读取半份配置。保存成功后 Agent 会热重载引擎；若监听地址改变，引擎会重启到新地址。
+界面有五个平级入口：状态、解析、规则集、优选、JSON。状态页同时承载运行状态与机器级设置（偏好、登录启动、系统 DNS、网络服务、退出）。界面风格支持跟随系统、深色、浅色，默认跟随系统。界面使用 [Flutter](https://flutter.dev) 构建，是可释放的配置窗口。轻量 EdgeSteer Agent 持有菜单栏、DNS 引擎、系统 DNS 与登录启动；窗口通过受限的本机控制通道向 Agent 发出命令，自身既不持有 DNS runtime，也不直接读写配置文件：读取、校验和保存都由 Agent 完成，保存前调用与 DNS 服务相同的严格校验，并以原子替换写入，避免 watcher 读取半份配置。保存成功后 Agent 会热重载引擎；若监听地址改变，引擎会重启到新地址。
 
 ```sh
 # 界面（需要 Flutter 3.35 或更新版本）

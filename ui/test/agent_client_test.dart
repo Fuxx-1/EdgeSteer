@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:edgesteer_ui/agent_client.dart';
+import 'package:flutter/material.dart' show Brightness;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -42,11 +43,33 @@ void main() {
     expect(withListener('Unavailable').listenerSupportsSystemDns, isFalse);
   });
 
-  test('preferences default to Chinese dark', () {
+  test('preferences default to Chinese and follow the system', () {
     const preferences = UiPreferences();
     expect(preferences.isChinese, isTrue);
-    expect(preferences.isDark, isTrue);
-    expect(preferences.toJson(), {'language': 'chinese', 'appearance': 'dark'});
+    expect(preferences.appearanceMode, AppearanceMode.system);
+    expect(preferences.toJson(), {
+      'language': 'chinese',
+      'appearance': 'system',
+    });
+  });
+
+  test('an unknown appearance value falls back to following the system', () {
+    expect(AppearanceMode.fromWire('solarized'), AppearanceMode.system);
+    expect(AppearanceMode.fromWire(null), AppearanceMode.system);
+  });
+
+  test('system appearance resolves against the platform brightness', () {
+    expect(
+      AppearanceMode.system.resolvesToDark(Brightness.dark),
+      isTrue,
+    );
+    expect(
+      AppearanceMode.system.resolvesToDark(Brightness.light),
+      isFalse,
+    );
+    // Explicit choices ignore the platform.
+    expect(AppearanceMode.dark.resolvesToDark(Brightness.light), isTrue);
+    expect(AppearanceMode.light.resolvesToDark(Brightness.dark), isFalse);
   });
 
   test('reads the agent record written by the Rust agent', () async {

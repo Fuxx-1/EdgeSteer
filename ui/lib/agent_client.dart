@@ -11,6 +11,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart' show Brightness;
+
 /// Protocol revision. It must match `CONTROL_PROTOCOL` in `src/control.rs`.
 const int controlProtocol = 2;
 
@@ -251,22 +253,46 @@ class ConfigSnapshot {
   final bool exists;
 }
 
+/// Appearance choice. `system` follows the operating system.
+enum AppearanceMode {
+  system('system'),
+  dark('dark'),
+  light('light');
+
+  const AppearanceMode(this.wire);
+
+  final String wire;
+
+  static AppearanceMode fromWire(String? wire) => values.firstWhere(
+        (mode) => mode.wire == wire,
+        orElse: () => AppearanceMode.system,
+      );
+
+  /// Resolves to an actual brightness, treating `system` as the platform value.
+  bool resolvesToDark(Brightness platformBrightness) => switch (this) {
+        AppearanceMode.system => platformBrightness == Brightness.dark,
+        AppearanceMode.dark => true,
+        AppearanceMode.light => false,
+      };
+}
+
 class UiPreferences {
   const UiPreferences({
     this.language = 'chinese',
-    this.appearance = 'dark',
+    this.appearance = 'system',
   });
 
   factory UiPreferences.fromJson(Map<String, dynamic> json) => UiPreferences(
         language: json['language'] as String? ?? 'chinese',
-        appearance: json['appearance'] as String? ?? 'dark',
+        appearance: json['appearance'] as String? ?? 'system',
       );
 
   final String language;
   final String appearance;
 
   bool get isChinese => language != 'english';
-  bool get isDark => appearance != 'light';
+
+  AppearanceMode get appearanceMode => AppearanceMode.fromWire(appearance);
 
   UiPreferences copyWith({String? language, String? appearance}) =>
       UiPreferences(

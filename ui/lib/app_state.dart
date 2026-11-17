@@ -167,8 +167,8 @@ class EdgeSteerController extends ChangeNotifier {
     return _savePreferences(next);
   }
 
-  Future<String?> setAppearance(bool dark) async {
-    final next = preferences.copyWith(appearance: dark ? 'dark' : 'light');
+  Future<String?> setAppearance(AppearanceMode mode) async {
+    final next = preferences.copyWith(appearance: mode.wire);
     return _savePreferences(next);
   }
 

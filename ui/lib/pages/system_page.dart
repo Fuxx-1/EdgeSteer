@@ -1,7 +1,9 @@
-/// System page: appearance, login item, system DNS, network services, quit.
+/// Machine-level controls for the status page: preferences, login item, system
+/// DNS, network services, and quit.
 ///
-/// Each capability is one row: label, current state, single action. State text
-/// explains itself, so there is no descriptive paragraph per section.
+/// Each capability is one row: label, current state, single action. These used
+/// to be a separate top-level page, but they describe the same running system
+/// the status strip reports, so they belong beside it.
 library;
 
 import 'package:flutter/material.dart';
@@ -12,8 +14,8 @@ import '../strings.dart';
 import '../widgets.dart';
 import 'overview_page.dart';
 
-class SystemPage extends StatelessWidget {
-  const SystemPage({
+class SystemSection extends StatelessWidget {
+  const SystemSection({
     super.key,
     required this.strings,
     required this.onNotice,
@@ -34,13 +36,11 @@ class SystemPage extends StatelessWidget {
     final canEnableSystemDns = systemDnsState == _SystemDnsState.ready;
     final autostartSupported = status?.autostartSupported ?? false;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
           EdgeGroup(
-            header: strings.application,
+            header: strings.preferences,
             children: [
               FormRow(
                 label: strings.language,
@@ -74,15 +74,18 @@ class SystemPage extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: SizedBox(
                     width: 160,
-                    child: EdgeSelect<String>(
-                      value: controller.preferences.isDark ? 'dark' : 'light',
+                    child: EdgeSelect<AppearanceMode>(
+                      value: controller.preferences.appearanceMode,
                       items: [
-                        (value: 'dark', label: strings.dark),
-                        (value: 'light', label: strings.light),
+                        (
+                          value: AppearanceMode.system,
+                          label: strings.followSystem,
+                        ),
+                        (value: AppearanceMode.dark, label: strings.dark),
+                        (value: AppearanceMode.light, label: strings.light),
                       ],
                       onChanged: (value) async {
-                        final error =
-                            await controller.setAppearance(value == 'dark');
+                        final error = await controller.setAppearance(value);
                         if (error != null) {
                           onNotice(error);
                         }
@@ -256,8 +259,7 @@ class SystemPage extends StatelessWidget {
               ),
             ],
           ),
-        ],
-      ),
+      ],
     );
   }
 

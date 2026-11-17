@@ -8,7 +8,6 @@ import 'package:edgesteer_ui/pages/json_page.dart';
 import 'package:edgesteer_ui/pages/overview_page.dart';
 import 'package:edgesteer_ui/pages/resolver_page.dart';
 import 'package:edgesteer_ui/pages/rules_page.dart';
-import 'package:edgesteer_ui/pages/system_page.dart';
 import 'package:edgesteer_ui/strings.dart';
 import 'package:edgesteer_ui/theme.dart';
 
@@ -73,12 +72,11 @@ void main() {
       OverviewPage(
         strings: Strings.zh,
         onNotice: (_) {},
-        onOpenResolvers: () {},
+        onQuit: () {},
       ),
     );
-    expect(find.text('entry'), findsWidgets);
-    expect(find.text('doh'), findsWidgets);
     expect(find.text('DNS 引擎'), findsOneWidget);
+    expect(find.text('启动'), findsOneWidget);
   });
 
   testWidgets('resolver page shows the master list and detail form',
@@ -109,14 +107,22 @@ void main() {
     expect(find.text('/tmp/edgesteer.json'), findsOneWidget);
   });
 
-  testWidgets('system page renders capabilities and services', (tester) async {
+  testWidgets('status page carries the system controls', (tester) async {
     await renderPage(
       tester,
-      SystemPage(strings: Strings.zh, onNotice: (_) {}, onQuit: () {}),
+      OverviewPage(
+        strings: Strings.zh,
+        onNotice: (_) {},
+        onQuit: () {},
+      ),
     );
-    expect(find.text('应用'), findsOneWidget);
-    expect(find.text('系统 DNS'), findsOneWidget);
+    // Preferences, login item, and system DNS all live on the status page now.
+    expect(find.text('偏好'), findsOneWidget);
+    expect(find.text('登录启动'), findsWidgets);
+    expect(find.text('系统 DNS'), findsWidgets);
     expect(find.text('退出 EdgeSteer'), findsWidgets);
+    // The resolver chain moved to its own page.
+    expect(find.text('解析链'), findsNothing);
   });
 
   testWidgets('english strings render without missing labels', (tester) async {
