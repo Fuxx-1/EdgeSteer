@@ -84,9 +84,10 @@ ThemeData buildTheme({required bool dark}) {
     ),
     scrollbarTheme: ScrollbarThemeData(
       thumbColor: WidgetStatePropertyAll(
-        scheme.onSurfaceVariant.withValues(alpha: 0.35),
+        scheme.onSurfaceVariant.withValues(alpha: 0.28),
       ),
-      thickness: const WidgetStatePropertyAll(8),
+      thickness: const WidgetStatePropertyAll(5),
+      radius: const Radius.circular(3),
     ),
   );
 }

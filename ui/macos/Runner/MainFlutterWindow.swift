@@ -12,10 +12,50 @@ class MainFlutterWindow: NSWindow {
     self.isRestorable = false
     self.minSize = NSSize(width: 900, height: 620)
 
+    // The interface draws its own window controls in the top bar, so the native
+    // title bar must not paint a second set. A transparent title bar with
+    // hidden buttons leaves the traffic lights' behaviour to the app while the
+    // whole window becomes content, which is what puts them beside the logo
+    // instead of in a separate strip above it.
+    self.titlebarAppearsTransparent = true
+    self.titleVisibility = .hidden
+    self.styleMask.insert(.fullSizeContentView)
+    for button in [NSWindow.ButtonType.closeButton,
+                   .miniaturizeButton,
+                   .zoomButton] {
+      self.standardWindowButton(button)?.isHidden = true
+    }
+    self.isMovableByWindowBackground = true
+
     // The interface talks to the agent over its authenticated loopback control
     // protocol. No engine, system DNS, or configuration access crosses this
     // channel, so there is no method channel to register.
     RegisterGeneratedPlugins(registry: flutterViewController)
+
+    // Window controls only. The interface draws the traffic lights itself, so
+    // it needs a way to drive the real window behaviour behind them.
+    let windowChannel = FlutterMethodChannel(
+      name: "io.edgesteer/window",
+      binaryMessenger: flutterViewController.engine.binaryMessenger)
+    windowChannel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(FlutterError(code: "no_window", message: nil, details: nil))
+        return
+      }
+      switch call.method {
+      case "close":
+        self.performClose(nil)
+        result(nil)
+      case "minimize":
+        self.miniaturize(nil)
+        result(nil)
+      case "zoom":
+        self.zoom(nil)
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
 
     super.awakeFromNib()
 

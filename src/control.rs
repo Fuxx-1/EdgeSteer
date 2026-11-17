@@ -248,6 +248,8 @@ impl Default for Language {
 #[serde(rename_all = "snake_case")]
 pub enum UiPage {
     Status,
+    /// The configuration section, opened on its first view.
+    Config,
     Resolvers,
     /// The Flutter interface names this page `ruleSets`, and the same string is
     /// passed through `EDGESTEER_UI_PAGE`. Spelling it explicitly keeps the wire
@@ -264,6 +266,7 @@ impl UiPage {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Status => "status",
+            Self::Config => "config",
             Self::Resolvers => "resolvers",
             Self::RuleSets => "ruleSets",
             Self::Preferred => "preferred",
@@ -472,6 +475,7 @@ mod tests {
         // the wrong page, so pin them here.
         for (page, wire) in [
             (UiPage::Status, "status"),
+            (UiPage::Config, "config"),
             (UiPage::Resolvers, "resolvers"),
             (UiPage::RuleSets, "ruleSets"),
             (UiPage::Preferred, "preferred"),

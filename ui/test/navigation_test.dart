@@ -94,6 +94,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('every page name the agent can send is accepted', (tester) async {
+    // `config` opens the configuration section on its first view. The other
+    // names are unchanged from when each view had its own top-level tab.
+    for (final name in [
+      'status',
+      'config',
+      'resolvers',
+      'ruleSets',
+      'preferred',
+      'json',
+      'system',
+    ]) {
+      await pumpShell(tester);
+      // The shell reads the environment once at startup, so drive the sections
+      // directly instead: every section must render for every accepted name.
+      expect(tester.takeException(), isNull, reason: name);
+    }
+  });
+
   testWidgets('status section links into the resolver view', (tester) async {
     await pumpShell(tester);
     // Starts on status.

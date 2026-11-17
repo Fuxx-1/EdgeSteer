@@ -19,6 +19,7 @@ import 'pages/rules_page.dart';
 import 'pages/system_page.dart';
 import 'strings.dart';
 import 'theme.dart';
+import 'window_controls.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -105,7 +106,8 @@ class _EdgeSteerShellState extends State<EdgeSteerShell> {
 
   static _Section _sectionFor(String? requested) => switch (requested) {
         'system' => _Section.system,
-        'resolvers' || 'ruleSets' || 'preferred' || 'json' => _Section.config,
+        'config' || 'resolvers' || 'ruleSets' || 'preferred' || 'json' =>
+          _Section.config,
         _ => _Section.status,
       };
 
@@ -256,9 +258,13 @@ class _TopBar extends StatelessWidget {
     return Container(
       height: 48,
       color: scheme.surfaceContainerLow,
-      padding: const EdgeInsets.only(left: 76, right: 12),
+      padding: const EdgeInsets.only(left: 14, right: 12),
       child: Row(
         children: [
+          // The native title bar is transparent and its buttons are hidden, so
+          // the lights are drawn here beside the logo.
+          const WindowControls(),
+          const SizedBox(width: 16),
           Image.asset(
             'assets/edgesteer-logo.png',
             width: 20,
